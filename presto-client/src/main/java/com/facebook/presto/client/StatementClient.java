@@ -64,6 +64,11 @@ public class StatementClient
     private final AtomicBoolean gone = new AtomicBoolean();
     private final AtomicBoolean valid = new AtomicBoolean(true);
 
+    // we need to keep these information, which will be used in advance() later
+    // maybe can find a better way to do this later
+    private final String user;
+    private final String identify;
+
     public StatementClient(AsyncHttpClient httpClient, JsonCodec<QueryResults> queryResultsCodec, ClientSession session, String query)
     {
         checkNotNull(httpClient, "httpClient is null");
@@ -75,6 +80,8 @@ public class StatementClient
         this.responseHandler = createFullJsonResponseHandler(queryResultsCodec);
         this.debug = session.isDebug();
         this.query = query;
+        this.user = session.getUser();
+        this.identify = session.getIdentify();
 
         Request request = buildQueryRequest(session, query);
         currentResults.set(httpClient.execute(request, responseHandler).getValue());
@@ -88,6 +95,9 @@ public class StatementClient
 
         if (session.getUser() != null) {
             builder.setHeader(PrestoHeaders.PRESTO_USER, session.getUser());
+        }
+        if (session.getIdentify() != null) {
+            builder.setHeader(PrestoHeaders.PRESTO_IDENTIFY, session.getIdentify());
         }
         if (session.getSource() != null) {
             builder.setHeader(PrestoHeaders.PRESTO_SOURCE, session.getSource());
@@ -145,6 +155,17 @@ public class StatementClient
         return valid.get() && (!isGone()) && (!isClosed());
     }
 
+    private Request.Builder attachUserInfo(Request.Builder reqBuilder)
+    {
+        if (user != null) {
+            reqBuilder.setHeader(PrestoHeaders.PRESTO_USER, user);
+        }
+        if (identify != null) {
+            reqBuilder.setHeader(PrestoHeaders.PRESTO_IDENTIFY, identify);
+        }
+        return reqBuilder;
+    }
+
     public boolean advance()
     {
         if (isClosed() || (current().getNextUri() == null)) {
@@ -152,10 +173,11 @@ public class StatementClient
             return false;
         }
 
-        Request request = prepareGet()
-                .setHeader(USER_AGENT, USER_AGENT_VALUE)
-                .setUri(current().getNextUri())
-                .build();
+        Request request = attachUserInfo(
+                prepareGet()
+                        .setHeader(USER_AGENT, USER_AGENT_VALUE)
+                        .setUri(current().getNextUri())
+        ).build();
 
         Exception cause = null;
         long start = System.nanoTime();
@@ -209,10 +231,11 @@ public class StatementClient
             return false;
         }
 
-        Request request = prepareDelete()
-                .setHeader(USER_AGENT, USER_AGENT_VALUE)
-                .setUri(uri)
-                .build();
+        Request request = attachUserInfo(
+                prepareDelete()
+                        .setHeader(USER_AGENT, USER_AGENT_VALUE)
+                        .setUri(uri)
+        ).build();
         StatusResponse status = httpClient.execute(request, createStatusResponseHandler());
         return familyForStatusCode(status.getStatusCode()) == Family.SUCCESSFUL;
     }
@@ -223,10 +246,11 @@ public class StatementClient
         if (!closed.getAndSet(true)) {
             URI uri = currentResults.get().getNextUri();
             if (uri != null) {
-                Request request = prepareDelete()
-                        .setHeader(USER_AGENT, USER_AGENT_VALUE)
-                        .setUri(uri)
-                        .build();
+                Request request = attachUserInfo(
+                        prepareDelete()
+                                .setHeader(USER_AGENT, USER_AGENT_VALUE)
+                                .setUri(uri)
+                ).build();
                 httpClient.executeAsync(request, createStatusResponseHandler());
             }
         }
