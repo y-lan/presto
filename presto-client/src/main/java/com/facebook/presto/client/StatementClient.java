@@ -69,6 +69,7 @@ public class StatementClient
     // maybe can find a better way to do this later
     private final String user;
     private final String identify;
+
     // a proxy may let us lost the original scheme info
     private final String scheme;
 
