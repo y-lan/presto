@@ -28,6 +28,9 @@ public class ClientOptions
     @Option(name = "--user", title = "user", description = "Username")
     public String user = System.getProperty("user.name");
 
+    @Option(name = "--pass", title = "pass", description = "Password")
+    public String pass = System.getProperty("user.password");
+
     @Option(name = "--source", title = "source", description = "Name of source making query")
     public String source = "presto-cli";
 
@@ -61,7 +64,7 @@ public class ClientOptions
 
     public ClientSession toClientSession()
     {
-        return new ClientSession(parseServer(server), user, source, catalog, schema, debug);
+        return new ClientSession(parseServer(server), user, pass, source, catalog, schema, debug);
     }
 
     public static URI parseServer(String server)
