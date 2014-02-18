@@ -25,6 +25,7 @@ import javax.annotation.concurrent.ThreadSafe;
 
 import java.io.Closeable;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -68,6 +69,8 @@ public class StatementClient
     // maybe can find a better way to do this later
     private final String user;
     private final String identify;
+    // a proxy may let us lost the original scheme info
+    private final String scheme;
 
     public StatementClient(AsyncHttpClient httpClient, JsonCodec<QueryResults> queryResultsCodec, ClientSession session, String query)
     {
@@ -84,6 +87,7 @@ public class StatementClient
         this.identify = session.getIdentify();
 
         Request request = buildQueryRequest(session, query);
+        this.scheme = request.getUri().getScheme();
         currentResults.set(httpClient.execute(request, responseHandler).getValue());
     }
 
@@ -166,6 +170,15 @@ public class StatementClient
         return reqBuilder;
     }
 
+    private URI rewriteScheme(URI u)
+    {
+      try {
+        return new URI(this.scheme, u.getSchemeSpecificPart(), u.getFragment());
+      } catch (URISyntaxException e) {
+        return u;
+      }
+    }
+
     public boolean advance()
     {
         if (isClosed() || (current().getNextUri() == null)) {
@@ -176,7 +189,7 @@ public class StatementClient
         Request request = attachUserInfo(
                 prepareGet()
                         .setHeader(USER_AGENT, USER_AGENT_VALUE)
-                        .setUri(current().getNextUri())
+                        .setUri(rewriteScheme(current().getNextUri()))
         ).build();
 
         Exception cause = null;
@@ -234,7 +247,7 @@ public class StatementClient
         Request request = attachUserInfo(
                 prepareDelete()
                         .setHeader(USER_AGENT, USER_AGENT_VALUE)
-                        .setUri(uri)
+                        .setUri(rewriteScheme(uri))
         ).build();
         StatusResponse status = httpClient.execute(request, createStatusResponseHandler());
         return familyForStatusCode(status.getStatusCode()) == Family.SUCCESSFUL;
@@ -249,7 +262,7 @@ public class StatementClient
                 Request request = attachUserInfo(
                         prepareDelete()
                                 .setHeader(USER_AGENT, USER_AGENT_VALUE)
-                                .setUri(uri)
+                                .setUri(rewriteScheme(uri))
                 ).build();
                 httpClient.executeAsync(request, createStatusResponseHandler());
             }
