@@ -23,6 +23,7 @@ public class ClientSession
 {
     private final URI server;
     private final String user;
+    private final String identify;
     private final String source;
     private final String catalog;
     private final String schema;
@@ -33,6 +34,7 @@ public class ClientSession
         return new ClientSession(
                 session.getServer(),
                 session.getUser(),
+                session.getIdentify(),
                 session.getSource(),
                 catalog,
                 session.getSchema(),
@@ -44,6 +46,7 @@ public class ClientSession
         return new ClientSession(
                 session.getServer(),
                 session.getUser(),
+                session.getIdentify(),
                 session.getSource(),
                 session.getCatalog(),
                 schema,
@@ -52,8 +55,14 @@ public class ClientSession
 
     public ClientSession(URI server, String user, String source, String catalog, String schema, boolean debug)
     {
+        this(server, user, "", source, catalog, schema, debug);
+    }
+
+    public ClientSession(URI server, String user, String identify, String source, String catalog, String schema, boolean debug)
+    {
         this.server = checkNotNull(server, "server is null");
         this.user = user;
+        this.identify = identify;
         this.source = source;
         this.catalog = catalog;
         this.schema = schema;
@@ -68,6 +77,11 @@ public class ClientSession
     public String getUser()
     {
         return user;
+    }
+
+    public String getIdentify()
+    {
+        return identify;
     }
 
     public String getSource()
