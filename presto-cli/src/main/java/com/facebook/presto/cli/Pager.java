@@ -14,7 +14,6 @@
 package com.facebook.presto.cli;
 
 import com.google.common.collect.ImmutableList;
-import org.apache.commons.lang3.SystemUtils;
 
 import javax.annotation.Nullable;
 
@@ -121,7 +120,7 @@ public class Pager
 
     public static Pager create(List<String> command)
     {
-        if (SystemUtils.IS_OS_WINDOWS) {
+        if (System.getProperty("os.name").toLowerCase().indexOf("win") >= 0) {
             return createNullPager();
         }
 
