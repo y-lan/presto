@@ -174,7 +174,8 @@ public class StatementClient
     {
       try {
         return new URI(this.scheme, u.getSchemeSpecificPart(), u.getFragment());
-      } catch (URISyntaxException e) {
+      }
+      catch (URISyntaxException e) {
         return u;
       }
     }
