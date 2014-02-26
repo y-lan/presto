@@ -142,6 +142,9 @@ public class HiveClient
     private final Executor executor;
     private final DataSize maxSplitSize;
 
+    private static final String HIVE_INVISIBLE_PROPERTY = "presto_invisible";
+    private static final String HIVE_INVISIBLE_PROPERTY_TRUE = "true";
+
     @Inject
     public HiveClient(HiveConnectorId connectorId,
             HiveClientConfig hiveClientConfig,
@@ -211,12 +214,31 @@ public class HiveClient
     {
         checkNotNull(tableName, "tableName is null");
         try {
-            metastore.getTable(tableName.getSchemaName(), tableName.getTableName());
+            Table table = metastore.getTable(tableName.getSchemaName(), tableName.getTableName());
+            if (isTableInvisible(table)) {
+                return null;
+            }
+
             return new HiveTableHandle(connectorId, tableName.getSchemaName(), tableName.getTableName());
         }
         catch (NoSuchObjectException e) {
             // table was not found
             return null;
+        }
+    }
+
+    private boolean isTableInvisible(Table table)
+    {
+        try {
+            return HIVE_INVISIBLE_PROPERTY_TRUE.equals(metastore
+                    .getDatabase(table.getDbName())
+                    .getParameters().get(HIVE_INVISIBLE_PROPERTY)
+            ) || HIVE_INVISIBLE_PROPERTY_TRUE.equals(table
+                    .getParameters().get(HIVE_INVISIBLE_PROPERTY)
+            );
+        }
+        catch (NoSuchObjectException e) {
+            return true;
         }
     }
 
