@@ -59,15 +59,25 @@ public class PrestoConnection
     private final URI uri;
     private final HostAndPort address;
     private final String user;
+    private final String password;
+    private final boolean secure;
     private final Map<String, String> clientInfo = new ConcurrentHashMap<>();
     private final QueryExecutor queryExecutor;
 
     PrestoConnection(URI uri, String user, QueryExecutor queryExecutor)
             throws SQLException
     {
+        this(uri, true, user, "", queryExecutor);
+    }
+
+    PrestoConnection(URI uri, boolean secure, String user, String password, QueryExecutor queryExecutor)
+            throws SQLException
+    {
         this.uri = checkNotNull(uri, "uri is null");
         this.address = HostAndPort.fromParts(uri.getHost(), uri.getPort());
         this.user = checkNotNull(user, "user is null");
+        this.password = checkNotNull(password, "password is null");
+        this.secure = secure;
         this.queryExecutor = checkNotNull(queryExecutor, "queryExecutor is null");
         catalog.set("default");
         schema.set("default");
@@ -510,7 +520,7 @@ public class PrestoConnection
         URI uri = createHttpUri(address);
 
         String source = Objects.firstNonNull(clientInfo.get("ApplicationName"), "presto-jdbc");
-        ClientSession session = new ClientSession(uri, user, source, catalog.get(), schema.get(), false);
+        ClientSession session = new ClientSession(uri, user, password, source, catalog.get(), schema.get(), false);
         return queryExecutor.startQuery(session, sql);
     }
 
@@ -560,10 +570,10 @@ public class PrestoConnection
         }
     }
 
-    private static URI createHttpUri(HostAndPort address)
+    private URI createHttpUri(HostAndPort address)
     {
         return uriBuilder()
-                .scheme("http")
+                .scheme(secure ? "https" : "http")
                 .host(address.getHostText())
                 .port(address.getPort())
                 .build();

@@ -48,6 +48,8 @@ public class PrestoDriver
     private static final String DRIVER_URL_START = "jdbc:presto:";
 
     private static final String USER_PROPERTY = "user";
+    private static final String PASSWORD_PROPERTY = "password";
+    private static final String SECURE_PROPERTY = "secure";
 
     private final QueryExecutor queryExecutor;
 
@@ -83,8 +85,13 @@ public class PrestoDriver
         if (isNullOrEmpty(user)) {
             throw new SQLException(format("Username property (%s) must be set", USER_PROPERTY));
         }
+        String password = info.getProperty(PASSWORD_PROPERTY);
+        if (isNullOrEmpty(password)) {
+            throw new SQLException(format("Password property (%s) must be set", PASSWORD_PROPERTY));
+        }
 
-        return new PrestoConnection(parseDriverUrl(url), user, queryExecutor);
+        return new PrestoConnection(parseDriverUrl(url), Boolean.valueOf(info.getProperty(SECURE_PROPERTY, "true"))
+                , user, password, queryExecutor);
     }
 
     @Override
