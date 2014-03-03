@@ -16,14 +16,19 @@ package com.facebook.presto.jdbc;
 import com.google.common.base.Throwables;
 
 import java.io.Closeable;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLDecoder;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.ResultSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.logging.Logger;
 
@@ -90,8 +95,39 @@ public class PrestoDriver
             throw new SQLException(format("Password property (%s) must be set", PASSWORD_PROPERTY));
         }
 
-        return new PrestoConnection(parseDriverUrl(url), Boolean.valueOf(info.getProperty(SECURE_PROPERTY, "true"))
-                , user, password, queryExecutor);
+        URI uri = parseDriverUrl(url);
+        Map<String, String> qs = null;
+        try {
+            qs = parseUriQueryString(uri);
+        }
+        catch (UnsupportedEncodingException e) {
+            throw new SQLException(format("Connection URI (%s) cannot be parsed", uri.toString()));
+        }
+
+        boolean secure = ((qs != null) && (qs.containsKey(SECURE_PROPERTY))) ? Boolean.valueOf(qs.get(SECURE_PROPERTY)) : true;
+
+        PrestoConnection connection = new PrestoConnection(uri, secure, user, password, queryExecutor);
+
+        try {
+            connection.createStatement().executeQuery("show catalogs");
+        }
+        catch (SQLException e) {
+            throw new SQLException("Error in setting up connection. May be caused by wrong username / password");
+        }
+
+        return connection;
+    }
+
+    private static Map<String, String> parseUriQueryString(URI uri) throws UnsupportedEncodingException
+    {
+        Map<String, String> queryPairs = new LinkedHashMap<>();
+        String query = uri.getQuery();
+        String[] pairs = query.split("&");
+        for (String pair : pairs) {
+            int idx = pair.indexOf("=");
+            queryPairs.put(URLDecoder.decode(pair.substring(0, idx), "UTF-8"), URLDecoder.decode(pair.substring(idx + 1), "UTF-8"));
+        }
+        return queryPairs;
     }
 
     @Override
