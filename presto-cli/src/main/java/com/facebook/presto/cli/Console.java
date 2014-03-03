@@ -15,6 +15,8 @@ package com.facebook.presto.cli;
 
 import com.facebook.presto.cli.ClientOptions.OutputFormat;
 import com.facebook.presto.client.ClientSession;
+import com.facebook.presto.client.QueryResults;
+import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.sql.parser.ParsingException;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.parser.StatementSplitter;
@@ -23,6 +25,7 @@ import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Files;
 import io.airlift.command.Command;
@@ -38,6 +41,7 @@ import javax.inject.Inject;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.util.List;
 
 import static com.facebook.presto.cli.Help.getHelpText;
 import static com.facebook.presto.sql.parser.StatementSplitter.Statement;
@@ -63,6 +67,7 @@ public class Console
     public void run()
     {
         ClientSession session = clientOptions.toClientSession();
+        checkConnection(session);
         boolean hasQuery = !Strings.isNullOrEmpty(clientOptions.execute);
         boolean isFromFile = !Strings.isNullOrEmpty(clientOptions.file);
 
@@ -92,6 +97,28 @@ public class Console
             }
             else {
                 runConsole(queryRunner, session);
+            }
+        }
+    }
+
+    private void checkConnection(ClientSession session)
+    {
+        try (QueryRunner queryRunner = QueryRunner.create(session)) {
+            try (StatementClient client = queryRunner.startInternalQuery("show catalogs")) {
+                ImmutableList.Builder<String> cache = ImmutableList.builder();
+                while (client.isValid() && !Thread.currentThread().isInterrupted()) {
+                    QueryResults results = client.current();
+                    if (results.getData() != null) {
+                        for (List<Object> row : results.getData()) {
+                            cache.add((String) row.get(0));
+                        }
+                    }
+                    client.advance();
+                }
+
+                if (client.isFailed() || cache.build().size() <= 0) {
+                    throw new RuntimeException("Error when connect to server, check your username/password");
+                }
             }
         }
     }
