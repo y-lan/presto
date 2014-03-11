@@ -20,6 +20,7 @@ import javax.validation.constraints.Min;
 public class NodeSchedulerConfig
 {
     private int minCandidates = 10;
+    private String rackTopologyScript = null;
 
     @Min(1)
     public int getMinCandidates()
@@ -27,10 +28,22 @@ public class NodeSchedulerConfig
         return minCandidates;
     }
 
+    public String getRackTopologyScript()
+    {
+        return rackTopologyScript;
+    }
+
     @Config("node-scheduler.min-candidates")
     public NodeSchedulerConfig setMinCandidates(int candidates)
     {
         this.minCandidates = candidates;
+        return this;
+    }
+
+    @Config("node-scheduler.rack-topology-script")
+    public NodeSchedulerConfig setRackTopologyScript(String script)
+    {
+        this.rackTopologyScript = script;
         return this;
     }
 }
