@@ -31,6 +31,9 @@ import org.weakref.jmx.Managed;
 
 import javax.inject.Inject;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -40,6 +43,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -55,12 +59,14 @@ public class NodeScheduler
     private final AtomicLong scheduleRack = new AtomicLong();
     private final AtomicLong scheduleRandom = new AtomicLong();
     private final int minCandidates;
+    private final String rackTopologyScript;
 
     @Inject
     public NodeScheduler(NodeManager nodeManager, NodeSchedulerConfig config)
     {
         this.nodeManager = nodeManager;
         this.minCandidates = config.getMinCandidates();
+        this.rackTopologyScript = config.getRackTopologyScript();
     }
 
     @Managed
@@ -117,7 +123,7 @@ public class NodeScheduler
                         InetAddress host = InetAddress.getByName(node.getHttpUri().getHost());
                         byHost.put(host, node);
 
-                        byRack.put(Rack.of(host), node);
+                        byRack.put(Rack.of(host, rackTopologyScript), node);
                     }
                     catch (UnknownHostException e) {
                         // ignore
@@ -243,7 +249,7 @@ public class NodeScheduler
                         // skip addresses that don't resolve
                         continue;
                     }
-                    for (Node node : nodeMap.getNodesByRack().get(Rack.of(address))) {
+                    for (Node node : nodeMap.getNodesByRack().get(Rack.of(address, rackTopologyScript))) {
                         if (chosen.add(node)) {
                             scheduleRack.incrementAndGet();
                         }
@@ -339,16 +345,68 @@ public class NodeScheduler
 
     private static class Rack
     {
-        private int id;
+        public static final String DEFAULT_RACK = "/default/rack";
+        private static ConcurrentHashMap<InetAddress, String> cache;
+        private String id;
 
         public static Rack of(InetAddress address)
         {
-            // TODO: this needs to be pluggable
-            int id = InetAddresses.coerceToInteger(address) & 0xFF_FF_FF_00;
-            return new Rack(id);
+            return Rack.of(address, null);
         }
 
-        private Rack(int id)
+        public static Rack of(InetAddress address, String rackTopologyScript)
+        {
+            if (cache == null) {
+                cache = new ConcurrentHashMap<InetAddress, String>();
+            }
+
+            if (cache.containsKey(address)) {
+                return new Rack(cache.get(address));
+            }
+            else {
+                String id;
+                if (rackTopologyScript != null) {
+                    id = resolveByScript(address.getHostAddress(), rackTopologyScript);
+                }
+                else {
+                    id = Integer.toString(InetAddresses.coerceToInteger(address) & 0xFF_FF_FF_00);
+                }
+                if (id != null && !id.isEmpty()) {
+                    cache.put(address, id);
+                    return new Rack(id);
+                }
+                else {
+                    return new Rack(DEFAULT_RACK);
+                }
+            }
+        }
+
+        private static String resolveByScript(String address, String rackTopologyScript)
+        {
+            ProcessBuilder processBuilder = new ProcessBuilder(rackTopologyScript, address);
+            Process process = null;
+            try {
+                process = processBuilder.start();
+            }
+            catch (IOException e) {
+                return Rack.DEFAULT_RACK;
+            }
+
+            String line;
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(process.getInputStream())))
+            {
+                while ((line = br.readLine()) != null) {
+                    sb.append(line).append(" ");
+                }
+            } catch (IOException e) {
+                return Rack.DEFAULT_RACK;
+            }
+
+            return sb.toString().trim().split("\\s+")[0];
+        }
+
+        private Rack(String id)
         {
             this.id = id;
         }
@@ -365,7 +423,7 @@ public class NodeScheduler
 
             Rack rack = (Rack) o;
 
-            if (id != rack.id) {
+            if (!id.equals(rack.id)) {
                 return false;
             }
 
@@ -375,7 +433,7 @@ public class NodeScheduler
         @Override
         public int hashCode()
         {
-            return id;
+            return id.hashCode();
         }
     }
 }
