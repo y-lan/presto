@@ -72,9 +72,6 @@ public class StatementClient
     // a proxy may let us lost the original scheme info
     private final String scheme;
 
-    // a proxy may let us lost the original scheme info
-    private final String scheme;
-
     public StatementClient(AsyncHttpClient httpClient, JsonCodec<QueryResults> queryResultsCodec, ClientSession session, String query)
     {
         checkNotNull(httpClient, "httpClient is null");
