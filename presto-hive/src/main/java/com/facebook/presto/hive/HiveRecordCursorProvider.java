@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.RecordCursor;
 import com.google.common.base.Optional;
 import org.apache.hadoop.mapred.RecordReader;
 
@@ -21,5 +20,5 @@ import java.util.List;
 
 public interface HiveRecordCursorProvider
 {
-    public Optional<RecordCursor> createHiveRecordCursor(HiveSplit split, RecordReader<?, ?> recordReader, List<HiveColumnHandle> columns);
+    Optional<HiveRecordCursor> createHiveRecordCursor(HiveSplit split, RecordReader<?, ?> recordReader, List<HiveColumnHandle> columns);
 }

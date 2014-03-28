@@ -16,7 +16,6 @@ package com.facebook.presto.hive;
 import com.facebook.presto.hive.util.SerDeUtils;
 import com.facebook.presto.spi.ColumnType;
 import com.facebook.presto.spi.PrestoException;
-import com.facebook.presto.spi.RecordCursor;
 import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
@@ -50,7 +49,7 @@ import static java.lang.Math.min;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 class GenericHiveRecordCursor<K, V extends Writable>
-        implements RecordCursor
+        extends HiveRecordCursor
 {
     private final RecordReader<K, V> recordReader;
     private final K key;
@@ -233,7 +232,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
         }
         catch (IOException | SerDeException | RuntimeException e) {
             close();
-            throw new PrestoException(HiveErrorCode.HIVE_CURSOR_ERROR, e);
+            throw new PrestoException(HiveErrorCode.HIVE_CURSOR_ERROR.toErrorCode(), e);
         }
     }
 

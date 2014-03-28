@@ -16,7 +16,6 @@ package com.facebook.presto.hive;
 import com.facebook.presto.hadoop.HadoopFileSystemCache;
 import com.facebook.presto.hadoop.HadoopNative;
 import com.facebook.presto.hive.util.BoundedExecutor;
-import com.facebook.presto.hive.util.HadoopApiStats;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ColumnType;
@@ -138,8 +137,9 @@ public class HiveClient
     private final int minPartitionBatchSize;
     private final int maxPartitionBatchSize;
     private final CachingHiveMetastore metastore;
-    private final HadoopApiStats hadoopApiStats;
+    private final NamenodeStats namenodeStats;
     private final HdfsEnvironment hdfsEnvironment;
+    private final DirectoryLister directoryLister;
     private final Executor executor;
     private final DataSize maxSplitSize;
 
@@ -150,14 +150,16 @@ public class HiveClient
     public HiveClient(HiveConnectorId connectorId,
             HiveClientConfig hiveClientConfig,
             CachingHiveMetastore metastore,
-            HadoopApiStats hadoopApiStats,
+            NamenodeStats namenodeStats,
             HdfsEnvironment hdfsEnvironment,
+            DirectoryLister directoryLister,
             @ForHiveClient ExecutorService executorService)
     {
         this(connectorId,
                 metastore,
-                hadoopApiStats,
+                namenodeStats,
                 hdfsEnvironment,
+                directoryLister,
                 new BoundedExecutor(executorService, hiveClientConfig.getMaxGlobalSplitIteratorThreads()),
                 hiveClientConfig.getMaxSplitSize(),
                 hiveClientConfig.getMaxOutstandingSplits(),
@@ -168,8 +170,9 @@ public class HiveClient
 
     public HiveClient(HiveConnectorId connectorId,
             CachingHiveMetastore metastore,
-            HadoopApiStats hadoopApiStats,
+            NamenodeStats namenodeStats,
             HdfsEnvironment hdfsEnvironment,
+            DirectoryLister directoryLister,
             Executor executor,
             DataSize maxSplitSize,
             int maxOutstandingSplits,
@@ -188,7 +191,8 @@ public class HiveClient
 
         this.metastore = checkNotNull(metastore, "metastore is null");
         this.hdfsEnvironment = checkNotNull(hdfsEnvironment, "hdfsEnvironment is null");
-        this.hadoopApiStats = checkNotNull(hadoopApiStats, "hadoopApiStats is null");
+        this.namenodeStats = checkNotNull(namenodeStats, "namenodeStats is null");
+        this.directoryLister = checkNotNull(directoryLister, "directoryLister is null");
 
         this.executor = checkNotNull(executor, "executor is null");
     }
@@ -761,7 +765,8 @@ public class HiveClient
                 maxOutstandingSplits,
                 maxSplitIteratorThreads,
                 hdfsEnvironment,
-                hadoopApiStats,
+                namenodeStats,
+                directoryLister,
                 executor,
                 maxPartitionBatchSize).get();
     }

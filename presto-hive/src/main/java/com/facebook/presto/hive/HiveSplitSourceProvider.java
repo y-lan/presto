@@ -16,9 +16,9 @@ package com.facebook.presto.hive;
 import com.facebook.presto.hive.util.AsyncRecursiveWalker;
 import com.facebook.presto.hive.util.BoundedExecutor;
 import com.facebook.presto.hive.util.FileStatusCallback;
-import com.facebook.presto.hive.util.HadoopApiStats;
 import com.facebook.presto.hive.util.SuspendingExecutor;
 import com.facebook.presto.spi.HostAddress;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.SplitSource;
 import com.google.common.annotations.VisibleForTesting;
@@ -46,6 +46,7 @@ import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -103,7 +104,8 @@ class HiveSplitSourceProvider
     private final int maxOutstandingSplits;
     private final int maxThreads;
     private final HdfsEnvironment hdfsEnvironment;
-    private final HadoopApiStats hadoopApiStats;
+    private final NamenodeStats namenodeStats;
+    private final DirectoryLister directoryLister;
     private final Executor executor;
     private final ClassLoader classLoader;
     private final DataSize maxSplitSize;
@@ -118,7 +120,8 @@ class HiveSplitSourceProvider
             int maxOutstandingSplits,
             int maxThreads,
             HdfsEnvironment hdfsEnvironment,
-            HadoopApiStats hadoopApiStats,
+            NamenodeStats namenodeStats,
+            DirectoryLister directoryLister,
             Executor executor,
             int maxPartitionBatchSize)
     {
@@ -132,7 +135,8 @@ class HiveSplitSourceProvider
         this.maxOutstandingSplits = maxOutstandingSplits;
         this.maxThreads = maxThreads;
         this.hdfsEnvironment = hdfsEnvironment;
-        this.hadoopApiStats = hadoopApiStats;
+        this.namenodeStats = namenodeStats;
+        this.directoryLister = directoryLister;
         this.executor = executor;
         this.classLoader = Thread.currentThread().getContextClassLoader();
     }
@@ -219,7 +223,7 @@ class HiveSplitSourceProvider
                 // callback to release it. Otherwise, we will need a try-finally block around this section.
                 semaphore.acquire();
 
-                ListenableFuture<Void> partitionFuture = new AsyncRecursiveWalker(fs, suspendingExecutor, hadoopApiStats).beginWalk(path, new FileStatusCallback()
+                ListenableFuture<Void> partitionFuture = createRecursiveWalker(fs, suspendingExecutor).beginWalk(path, new FileStatusCallback()
                 {
                     @Override
                     public void process(FileStatus file, BlockLocation[] blockLocations)
@@ -274,6 +278,11 @@ class HiveSplitSourceProvider
             hiveSplitSource.fail(e);
             Throwables.propagateIfInstanceOf(e, Error.class);
         }
+    }
+
+    private AsyncRecursiveWalker createRecursiveWalker(FileSystem fs, SuspendingExecutor suspendingExecutor)
+    {
+        return new AsyncRecursiveWalker(fs, suspendingExecutor, directoryLister, namenodeStats);
     }
 
     private static Optional<FileStatus> getBucketFile(HiveBucket bucket, FileSystem fs, Path path)
@@ -476,11 +485,17 @@ class HiveSplitSourceProvider
             }
 
             // Before returning, check if there is a registered failure.
-            // If so, we want to throw the error, instead of retuning because the scheduler can block
+            // If so, we want to throw the error, instead of returning because the scheduler can block
             // while scheduling splits and wait for work to finish before continuing.  In this case,
             // we want to end the query as soon as possible and abort the work
             if (throwable.get() != null) {
-                throw Throwables.propagate(throwable.get());
+                if (throwable.get() instanceof PrestoException) {
+                    throw (PrestoException) throwable.get();
+                }
+                if (throwable.get() instanceof FileNotFoundException) {
+                    throw new PrestoException(HiveErrorCode.HIVE_FILE_NOT_FOUND.toErrorCode(), throwable.get());
+                }
+                throw new PrestoException(HiveErrorCode.HIVE_UNKNOWN_ERROR.toErrorCode(), throwable.get());
             }
 
             // decrement the outstanding split count by the number of splits we took

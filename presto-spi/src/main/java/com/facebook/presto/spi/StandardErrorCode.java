@@ -14,7 +14,6 @@
 package com.facebook.presto.spi;
 
 public enum StandardErrorCode
-        implements ErrorCode
 {
     USER_ERROR(0x0000_0000),
     SYNTAX_ERROR(0x0000_0001),
@@ -23,6 +22,8 @@ public enum StandardErrorCode
     CANNOT_DROP_TABLE(0x0000_0004),
     NOT_FOUND(0x0000_0005),
     FUNCTION_NOT_FOUND(0x0000_0006),
+    INVALID_FUNCTION_ARGUMENT(0x0000_0007),
+    DIVISION_BY_ZERO(0x0000_0008),
 
     INTERNAL(0x0001_0000),
     TOO_MANY_REQUESTS_FAILED(0x0001_0001),
@@ -33,34 +34,27 @@ public enum StandardErrorCode
     // Connectors can use error codes starting at EXTERNAL
     EXTERNAL(0x0100_0000);
 
-    private final int code;
+    private final ErrorCode errorCode;
 
     StandardErrorCode(int code)
     {
-        this.code = code;
+        errorCode = new ErrorCode(code, name());
     }
 
-    @Override
-    public int getCode()
+    public ErrorCode toErrorCode()
     {
-        return code;
-    }
-
-    @Override
-    public String getName()
-    {
-        return name();
+        return errorCode;
     }
 
     public static ErrorType toErrorType(int code)
     {
-        if (code < INTERNAL.getCode()) {
+        if (code < INTERNAL.toErrorCode().getCode()) {
             return ErrorType.USER_ERROR;
         }
-        if (code < INSUFFICIENT_RESOURCES.getCode()) {
+        if (code < INSUFFICIENT_RESOURCES.toErrorCode().getCode()) {
             return ErrorType.INTERNAL;
         }
-        if (code < EXTERNAL.getCode()) {
+        if (code < EXTERNAL.toErrorCode().getCode()) {
             return ErrorType.INSUFFICIENT_RESOURCES;
         }
         return ErrorType.EXTERNAL;

@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.hive.util.HadoopApiStats;
 import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.inject.Binder;
@@ -54,14 +53,15 @@ public class HiveClientModule
 
         binder.bind(HdfsConfiguration.class).in(Scopes.SINGLETON);
         binder.bind(HdfsEnvironment.class).in(Scopes.SINGLETON);
+        binder.bind(DirectoryLister.class).to(HadoopDirectoryLister.class).in(Scopes.SINGLETON);
         bindConfig(binder).to(HiveClientConfig.class);
         bindConfig(binder).to(HivePluginConfig.class);
 
         binder.bind(CachingHiveMetastore.class).in(Scopes.SINGLETON);
         newExporter(binder).export(CachingHiveMetastore.class)
                 .as(generatedNameOf(CachingHiveMetastore.class, connectorId));
-        binder.bind(HadoopApiStats.class).in(Scopes.SINGLETON);
-        newExporter(binder).export(HadoopApiStats.class).as(generatedNameOf(HadoopApiStats.class));
+        binder.bind(NamenodeStats.class).in(Scopes.SINGLETON);
+        newExporter(binder).export(NamenodeStats.class).as(generatedNameOf(NamenodeStats.class));
 
         binder.bind(DiscoveryLocatedHiveCluster.class).in(Scopes.SINGLETON);
         binder.bind(HiveMetastoreClientFactory.class).in(Scopes.SINGLETON);

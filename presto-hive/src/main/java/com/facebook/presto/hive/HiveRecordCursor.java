@@ -11,33 +11,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.client;
+package com.facebook.presto.hive;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import com.facebook.presto.spi.RecordCursor;
 
-public class Failure
-        extends RuntimeException
+public abstract class HiveRecordCursor
+        implements RecordCursor
 {
-    private final String type;
-
-    Failure(String type, String message, Failure cause)
-    {
-        super(message, cause, true, true);
-        this.type = checkNotNull(type, "type is null");
-    }
-
-    public String getType()
-    {
-        return type;
-    }
+    private long readTime;
 
     @Override
-    public String toString()
+    public long getReadTimeNanos()
     {
-        String message = getMessage();
-        if (message != null) {
-            return type + ": " + message;
-        }
-        return type;
+        return readTime;
+    }
+
+    // For use with HDFS clients that can report the remote read time
+    public void addReadTime(long nanos)
+    {
+        readTime += nanos;
     }
 }

@@ -15,7 +15,6 @@ package com.facebook.presto.execution;
 
 import com.facebook.presto.OutputBuffers;
 import com.facebook.presto.UnpartitionedPagePartitionFunction;
-import com.facebook.presto.client.FailureInfo;
 import com.facebook.presto.connector.dual.DualMetadata;
 import com.facebook.presto.connector.dual.DualSplit;
 import com.facebook.presto.execution.SharedBuffer.QueueState;
@@ -34,6 +33,7 @@ import com.facebook.presto.spi.Node;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.SplitSource;
 import com.facebook.presto.spi.TableHandle;
+import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.planner.PlanFragment;
@@ -96,7 +96,7 @@ public class TestSqlStageExecution
     public void setUp()
             throws Exception
     {
-        metadata = new MetadataManager();
+        metadata = new MetadataManager(new FeaturesConfig());
         metadata.addInternalSchemaMetadata(MetadataManager.INTERNAL_CONNECTOR_ID, new DualMetadata());
 
     }
@@ -203,7 +203,7 @@ public class TestSqlStageExecution
         ExecutorService executor = Executors.newCachedThreadPool(Threads.daemonThreadsNamed("test"));
         SqlStageExecution stageExecution = null;
         try {
-            MetadataManager metadata = new MetadataManager();
+            MetadataManager metadata = new MetadataManager(new FeaturesConfig());
             metadata.addInternalSchemaMetadata(MetadataManager.INTERNAL_CONNECTOR_ID, new DualMetadata());
 
             StageExecutionPlan joinPlan = createJoinPlan("A", metadata);
@@ -410,7 +410,7 @@ public class TestSqlStageExecution
             public TaskInfo getTaskInfo()
             {
                 TaskState state = taskStateMachine.getState();
-                List<FailureInfo> failures = ImmutableList.of();
+                List<ExecutionFailureInfo> failures = ImmutableList.of();
                 if (state == TaskState.FAILED) {
                     failures = toFailures(taskStateMachine.getFailureCauses());
                 }

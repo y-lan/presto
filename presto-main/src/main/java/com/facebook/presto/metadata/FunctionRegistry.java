@@ -15,7 +15,6 @@ package com.facebook.presto.metadata;
 
 import com.facebook.presto.operator.Description;
 import com.facebook.presto.operator.aggregation.AggregationFunction;
-import com.facebook.presto.operator.aggregation.BootstrappedAggregation;
 import com.facebook.presto.operator.scalar.ColorFunctions;
 import com.facebook.presto.operator.scalar.JsonFunctions;
 import com.facebook.presto.operator.scalar.MathFunctions;
@@ -30,8 +29,8 @@ import com.facebook.presto.operator.window.PercentRankFunction;
 import com.facebook.presto.operator.window.RankFunction;
 import com.facebook.presto.operator.window.RowNumberFunction;
 import com.facebook.presto.operator.window.WindowFunction;
-import com.facebook.presto.spi.StandardErrorCode;
 import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.StandardErrorCode;
 import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.gen.FunctionBinder;
@@ -69,9 +68,16 @@ import java.util.Set;
 import static com.facebook.presto.metadata.FunctionInfo.isAggregationPredicate;
 import static com.facebook.presto.operator.aggregation.ApproximateAverageAggregations.DOUBLE_APPROXIMATE_AVERAGE_AGGREGATION;
 import static com.facebook.presto.operator.aggregation.ApproximateAverageAggregations.LONG_APPROXIMATE_AVERAGE_AGGREGATION;
+import static com.facebook.presto.operator.aggregation.ApproximateCountAggregation.APPROXIMATE_COUNT_AGGREGATION;
+import static com.facebook.presto.operator.aggregation.ApproximateCountColumnAggregations.BOOLEAN_APPROXIMATE_COUNT_AGGREGATION;
+import static com.facebook.presto.operator.aggregation.ApproximateCountColumnAggregations.DOUBLE_APPROXIMATE_COUNT_AGGREGATION;
+import static com.facebook.presto.operator.aggregation.ApproximateCountColumnAggregations.LONG_APPROXIMATE_COUNT_AGGREGATION;
+import static com.facebook.presto.operator.aggregation.ApproximateCountColumnAggregations.VARBINARY_APPROXIMATE_COUNT_AGGREGATION;
 import static com.facebook.presto.operator.aggregation.ApproximateCountDistinctAggregations.DOUBLE_APPROXIMATE_COUNT_DISTINCT_AGGREGATIONS;
 import static com.facebook.presto.operator.aggregation.ApproximateCountDistinctAggregations.LONG_APPROXIMATE_COUNT_DISTINCT_AGGREGATIONS;
 import static com.facebook.presto.operator.aggregation.ApproximateCountDistinctAggregations.VARBINARY_APPROXIMATE_COUNT_DISTINCT_AGGREGATIONS;
+import static com.facebook.presto.operator.aggregation.ApproximateDoubleSumAggregation.DOUBLE_APPROXIMATE_SUM_AGGREGATION;
+import static com.facebook.presto.operator.aggregation.ApproximateLongSumAggregation.LONG_APPROXIMATE_SUM_AGGREGATION;
 import static com.facebook.presto.operator.aggregation.ApproximatePercentileAggregations.DOUBLE_APPROXIMATE_PERCENTILE_AGGREGATION;
 import static com.facebook.presto.operator.aggregation.ApproximatePercentileAggregations.LONG_APPROXIMATE_PERCENTILE_AGGREGATION;
 import static com.facebook.presto.operator.aggregation.ApproximatePercentileWeightedAggregations.DOUBLE_APPROXIMATE_PERCENTILE_WEIGHTED_AGGREGATION;
@@ -118,9 +124,9 @@ public class FunctionRegistry
 {
     private volatile FunctionMap functions = new FunctionMap();
 
-    public FunctionRegistry()
+    public FunctionRegistry(boolean experimentalSyntaxEnabled)
     {
-        List<FunctionInfo> functions = new FunctionListBuilder()
+         FunctionListBuilder builder = new FunctionListBuilder()
                 .window("row_number", BIGINT, ImmutableList.<Type>of(), supplier(RowNumberFunction.class))
                 .window("rank", BIGINT, ImmutableList.<Type>of(), supplier(RankFunction.class))
                 .window("dense_rank", BIGINT, ImmutableList.<Type>of(), supplier(DenseRankFunction.class))
@@ -166,25 +172,27 @@ public class FunctionRegistry
                 .aggregate("approx_percentile", DOUBLE, ImmutableList.of(DOUBLE, BIGINT, DOUBLE), VARCHAR, DOUBLE_APPROXIMATE_PERCENTILE_WEIGHTED_AGGREGATION)
                 .aggregate("approx_avg", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, LONG_APPROXIMATE_AVERAGE_AGGREGATION)
                 .aggregate("approx_avg", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, DOUBLE_APPROXIMATE_AVERAGE_AGGREGATION)
-                .approximateAggregate("avg", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, LONG_APPROXIMATE_AVERAGE_AGGREGATION)
-                .approximateAggregate("avg", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, DOUBLE_APPROXIMATE_AVERAGE_AGGREGATION)
-                .approximateAggregate("sum", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, new BootstrappedAggregation(LONG_SUM))
-                .approximateAggregate("sum", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, new BootstrappedAggregation(DOUBLE_SUM))
-                .approximateAggregate("count", VARCHAR, ImmutableList.<Type>of(), VARCHAR, new BootstrappedAggregation(COUNT))
-                .approximateAggregate("count", VARCHAR, ImmutableList.of(BOOLEAN), VARCHAR, new BootstrappedAggregation(COUNT_BOOLEAN_COLUMN))
-                .approximateAggregate("count", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, new BootstrappedAggregation(COUNT_LONG_COLUMN))
-                .approximateAggregate("count", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, new BootstrappedAggregation(COUNT_DOUBLE_COLUMN))
-                .approximateAggregate("count", VARCHAR, ImmutableList.of(VARCHAR), VARCHAR, new BootstrappedAggregation(COUNT_STRING_COLUMN))
                 .scalar(StringFunctions.class)
                 .scalar(RegexpFunctions.class)
                 .scalar(UrlFunctions.class)
                 .scalar(MathFunctions.class)
                 .scalar(UnixTimeFunctions.class)
                 .scalar(JsonFunctions.class)
-                .scalar(ColorFunctions.class)
-                .build();
+                .scalar(ColorFunctions.class);
 
-        addFunctions(functions);
+        if (experimentalSyntaxEnabled) {
+            builder.approximateAggregate("avg", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, LONG_APPROXIMATE_AVERAGE_AGGREGATION)
+                    .approximateAggregate("avg", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, DOUBLE_APPROXIMATE_AVERAGE_AGGREGATION)
+                    .approximateAggregate("sum", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, LONG_APPROXIMATE_SUM_AGGREGATION)
+                    .approximateAggregate("sum", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, DOUBLE_APPROXIMATE_SUM_AGGREGATION)
+                    .approximateAggregate("count", VARCHAR, ImmutableList.<Type>of(), VARCHAR, APPROXIMATE_COUNT_AGGREGATION)
+                    .approximateAggregate("count", VARCHAR, ImmutableList.of(BOOLEAN), VARCHAR, BOOLEAN_APPROXIMATE_COUNT_AGGREGATION)
+                    .approximateAggregate("count", VARCHAR, ImmutableList.of(BIGINT), VARCHAR, LONG_APPROXIMATE_COUNT_AGGREGATION)
+                    .approximateAggregate("count", VARCHAR, ImmutableList.of(DOUBLE), VARCHAR, DOUBLE_APPROXIMATE_COUNT_AGGREGATION)
+                    .approximateAggregate("count", VARCHAR, ImmutableList.of(VARCHAR), VARCHAR, VARBINARY_APPROXIMATE_COUNT_AGGREGATION);
+        }
+
+        addFunctions(builder.build());
     }
 
     public final synchronized void addFunctions(List<FunctionInfo> functions)
@@ -241,7 +249,7 @@ public class FunctionRegistry
             String expected = Joiner.on(", ").join(expectedParameters);
             message = format("Unexpected parameters (%s) for function %s. Expected: %s", parameters, name, expected);
         }
-        throw new PrestoException(StandardErrorCode.FUNCTION_NOT_FOUND, message);
+        throw new PrestoException(StandardErrorCode.FUNCTION_NOT_FOUND.toErrorCode(), message);
     }
 
     private static boolean canCoerce(List<Type> parameterTypes, FunctionInfo functionInfo)
