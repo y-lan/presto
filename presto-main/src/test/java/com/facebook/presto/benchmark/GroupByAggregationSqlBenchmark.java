@@ -18,7 +18,7 @@ import com.facebook.presto.util.LocalQueryRunner;
 import java.util.concurrent.ExecutorService;
 
 import static com.facebook.presto.benchmark.BenchmarkQueryRunner.createLocalQueryRunner;
-import static com.facebook.presto.util.Threads.daemonThreadsNamed;
+import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 
 public class GroupByAggregationSqlBenchmark
@@ -26,7 +26,7 @@ public class GroupByAggregationSqlBenchmark
 {
     public GroupByAggregationSqlBenchmark(LocalQueryRunner localQueryRunner)
     {
-        super(localQueryRunner, "sql_groupby_agg", 5, 25, "select orderstatus, sum(totalprice) from orders group by orderstatus");
+        super(localQueryRunner, "sql_groupby_agg", 15, 100, "select orderstatus, sum(totalprice) from orders group by orderstatus");
     }
 
     public static void main(String[] args)

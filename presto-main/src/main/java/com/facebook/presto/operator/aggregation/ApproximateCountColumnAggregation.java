@@ -13,11 +13,11 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.block.Block;
-import com.facebook.presto.block.BlockBuilder;
-import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
-import com.facebook.presto.tuple.TupleInfo.Type;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.util.array.LongBigArray;
 import com.google.common.base.Optional;
 import io.airlift.slice.Slice;
@@ -25,7 +25,7 @@ import io.airlift.slice.Slices;
 
 import static com.facebook.presto.operator.aggregation.ApproximateUtils.countError;
 import static com.facebook.presto.operator.aggregation.ApproximateUtils.formatApproximateResult;
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
@@ -39,7 +39,7 @@ public class ApproximateCountColumnAggregation
     public ApproximateCountColumnAggregation(Type parameterType)
     {
         // TODO: Change intermediate to fixed width, once we have a better type system
-        super(SINGLE_VARBINARY, SINGLE_VARBINARY, parameterType);
+        super(VARCHAR, VARCHAR, parameterType);
     }
 
     @Override
@@ -59,7 +59,7 @@ public class ApproximateCountColumnAggregation
 
         public ApproximateCountColumnGroupedAccumulator(int valueChannel, Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel, double confidence)
         {
-            super(valueChannel, SINGLE_VARBINARY, SINGLE_VARBINARY, maskChannel, sampleWeightChannel);
+            super(valueChannel, VARCHAR, VARCHAR, maskChannel, sampleWeightChannel);
             this.counts = new LongBigArray();
             this.samples = new LongBigArray();
             this.confidence = confidence;
@@ -117,7 +117,7 @@ public class ApproximateCountColumnAggregation
         @Override
         public void evaluateIntermediate(int groupId, BlockBuilder output)
         {
-            output.append(createIntermediate(counts.get(groupId), samples.get(groupId)));
+            output.appendSlice(createIntermediate(counts.get(groupId), samples.get(groupId)));
         }
 
         @Override
@@ -125,7 +125,8 @@ public class ApproximateCountColumnAggregation
         {
             long count = counts.get(groupId);
             long samples = this.samples.get(groupId);
-            output.append(formatApproximateResult(count, countError(samples, count), confidence, true));
+            String result = formatApproximateResult(count, countError(samples, count), confidence, true);
+            output.appendSlice(Slices.utf8Slice(result));
         }
     }
 
@@ -146,7 +147,7 @@ public class ApproximateCountColumnAggregation
 
         public ApproximateCountColumnAccumulator(int valueChannel, Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel, double confidence)
         {
-            super(valueChannel, SINGLE_VARBINARY, SINGLE_VARBINARY, maskChannel, sampleWeightChannel);
+            super(valueChannel, VARCHAR, VARCHAR, maskChannel, sampleWeightChannel);
             this.confidence = confidence;
         }
 
@@ -188,13 +189,14 @@ public class ApproximateCountColumnAggregation
         @Override
         public void evaluateIntermediate(BlockBuilder out)
         {
-            out.append(createIntermediate(count, samples));
+            out.appendSlice(createIntermediate(count, samples));
         }
 
         @Override
         public void evaluateFinal(BlockBuilder out)
         {
-            out.append(formatApproximateResult(count, countError(samples, count), confidence, true));
+            String result = formatApproximateResult(count, countError(samples, count), confidence, true);
+            out.appendSlice(Slices.utf8Slice(result));
         }
     }
 

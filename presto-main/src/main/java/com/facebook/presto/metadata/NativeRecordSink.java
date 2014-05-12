@@ -13,19 +13,18 @@
  */
 package com.facebook.presto.metadata;
 
-import com.facebook.presto.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.operator.PageBuilder;
-import com.facebook.presto.spi.ColumnType;
 import com.facebook.presto.spi.RecordSink;
-import com.facebook.presto.tuple.TupleInfo;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Joiner;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
+import io.airlift.slice.Slices;
 
 import java.io.IOException;
 import java.util.List;
 
-import static com.facebook.presto.tuple.TupleInfo.Type.fromColumnType;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -41,12 +40,12 @@ public class NativeRecordSink
 
     private int field = -1;
 
-    public NativeRecordSink(String nodeId, ColumnFileHandle fileHandle, LocalStorageManager storageManager, List<ColumnType> columnTypes, NativeColumnHandle sampleWeightColumnHandle)
+    public NativeRecordSink(String nodeId, ColumnFileHandle fileHandle, LocalStorageManager storageManager, List<Type> columnTypes, NativeColumnHandle sampleWeightColumnHandle)
     {
         this.nodeId = checkNotNull(nodeId, "nodeId is null");
         this.fileHandle = checkNotNull(fileHandle, "fileHandle is null");
         this.storageManager = checkNotNull(storageManager, "storageManager is null");
-        List<TupleInfo> tupleInfos = toTupleInfos(columnTypes);
+
         if (sampleWeightColumnHandle != null) {
             checkArgument(sampleWeightColumnHandle.getColumnName().equals(NativeColumnHandle.SAMPLE_WEIGHT_COLUMN_NAME), "sample weight column handle has wrong name");
             // sample weight is always stored last in the table
@@ -55,7 +54,7 @@ public class NativeRecordSink
         else {
             sampleWeightField = -1;
         }
-        pageBuilder = new PageBuilder(tupleInfos);
+        pageBuilder = new PageBuilder(toTypes(columnTypes));
     }
 
     @Override
@@ -64,7 +63,7 @@ public class NativeRecordSink
         checkState(field == -1, "already in record");
         field = 0;
         if (sampleWeightField >= 0) {
-            pageBuilder.getBlockBuilder(sampleWeightField).append(sampleWeight);
+            pageBuilder.getBlockBuilder(sampleWeightField).appendLong(sampleWeight);
         }
     }
 
@@ -95,25 +94,25 @@ public class NativeRecordSink
     @Override
     public void appendBoolean(boolean value)
     {
-        nextColumn().append(value);
+        nextColumn().appendBoolean(value);
     }
 
     @Override
     public void appendLong(long value)
     {
-        nextColumn().append(value);
+        nextColumn().appendLong(value);
     }
 
     @Override
     public void appendDouble(double value)
     {
-        nextColumn().append(value);
+        nextColumn().appendDouble(value);
     }
 
     @Override
     public void appendString(byte[] value)
     {
-        nextColumn().append(value);
+        nextColumn().appendSlice(Slices.wrappedBuffer(value));
     }
 
     @Override
@@ -144,12 +143,12 @@ public class NativeRecordSink
         return builder;
     }
 
-    private static List<TupleInfo> toTupleInfos(List<ColumnType> columnTypes)
+    private static List<Type> toTypes(List<Type> columnTypes)
     {
-        ImmutableList.Builder<TupleInfo> tupleInfos = ImmutableList.builder();
-        for (ColumnType columnType : columnTypes) {
-            tupleInfos.add(new TupleInfo(fromColumnType(columnType)));
+        ImmutableList.Builder<Type> types = ImmutableList.builder();
+        for (Type columnType : columnTypes) {
+            types.add(columnType);
         }
-        return tupleInfos.build();
+        return types.build();
     }
 }

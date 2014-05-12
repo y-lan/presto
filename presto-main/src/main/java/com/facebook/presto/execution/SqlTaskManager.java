@@ -18,7 +18,7 @@ import com.facebook.presto.TaskSource;
 import com.facebook.presto.event.query.QueryMonitor;
 import com.facebook.presto.execution.SharedBuffer.QueueState;
 import com.facebook.presto.operator.TaskContext;
-import com.facebook.presto.sql.analyzer.Session;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.sql.planner.LocalExecutionPlanner;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
@@ -52,8 +52,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import static com.facebook.presto.util.Threads.threadsNamed;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static io.airlift.concurrent.Threads.threadsNamed;
 
 public class SqlTaskManager
         implements TaskManager
@@ -279,7 +279,7 @@ public class SqlTaskManager
     }
 
     @Override
-    public TaskInfo updateTask(Session session, TaskId taskId, PlanFragment fragment, List<TaskSource> sources, OutputBuffers outputBuffers)
+    public TaskInfo updateTask(ConnectorSession session, TaskId taskId, PlanFragment fragment, List<TaskSource> sources, OutputBuffers outputBuffers)
     {
         URI location = locationFactory.createLocalTaskLocation(taskId);
 

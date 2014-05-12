@@ -17,12 +17,12 @@ import com.facebook.presto.OutputBuffers;
 import com.facebook.presto.UnpartitionedPagePartitionFunction;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.metadata.Metadata;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.Analyzer;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.sql.analyzer.QueryExplainer;
-import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.planner.DistributedExecutionPlanner;
 import com.facebook.presto.sql.planner.DistributedLogicalPlanner;
 import com.facebook.presto.sql.planner.InputExtractor;
@@ -53,9 +53,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.OutputBuffers.INITIAL_EMPTY_OUTPUT_BUFFERS;
-import static com.facebook.presto.util.Threads.threadsNamed;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static io.airlift.concurrent.Threads.threadsNamed;
 
 @ThreadSafe
 public class SqlQueryExecution
@@ -67,6 +67,7 @@ public class SqlQueryExecution
 
     private final QueryStateMachine stateMachine;
 
+    private final ConnectorSession session;
     private final Statement statement;
     private final Metadata metadata;
     private final SplitManager splitManager;
@@ -85,7 +86,7 @@ public class SqlQueryExecution
 
     public SqlQueryExecution(QueryId queryId,
             String query,
-            Session session,
+            ConnectorSession session,
             URI self,
             Statement statement,
             Metadata metadata,
@@ -101,6 +102,7 @@ public class SqlQueryExecution
             ExecutorService queryExecutor)
     {
         try (SetThreadName setThreadName = new SetThreadName("Query-%s", queryId)) {
+            this.session = checkNotNull(session, "session is null");
             this.statement = checkNotNull(statement, "statement is null");
             this.metadata = checkNotNull(metadata, "metadata is null");
             this.splitManager = checkNotNull(splitManager, "splitManager is null");
@@ -206,7 +208,7 @@ public class SqlQueryExecution
         stateMachine.setInputs(inputs);
 
         // fragment the plan
-        SubPlan subplan = new DistributedLogicalPlanner(metadata, idAllocator).createSubPlans(plan, false);
+        SubPlan subplan = new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, false);
 
         stateMachine.recordAnalysisTime(analysisStart);
         return subplan;
@@ -429,7 +431,7 @@ public class SqlQueryExecution
         }
 
         @Override
-        public SqlQueryExecution createQueryExecution(QueryId queryId, String query, Session session, Statement statement)
+        public SqlQueryExecution createQueryExecution(QueryId queryId, String query, ConnectorSession session, Statement statement)
         {
             SqlQueryExecution queryExecution = new SqlQueryExecution(queryId,
                     query,

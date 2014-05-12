@@ -16,13 +16,14 @@ package com.facebook.presto.operator;
 import com.facebook.presto.ScheduledSplit;
 import com.facebook.presto.TaskSource;
 import com.facebook.presto.execution.TaskId;
-import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.metadata.ColumnHandle;
+import com.facebook.presto.metadata.Split;
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
-import com.facebook.presto.spi.Split;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.DataStreamProvider;
-import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
-import com.facebook.presto.tuple.TupleInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -34,6 +35,7 @@ import org.testng.annotations.Test;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -43,11 +45,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static com.facebook.presto.operator.RowPagesBuilder.rowPagesBuilder;
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_LONG;
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
-import static com.facebook.presto.util.Threads.daemonThreadsNamed;
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Throwables.getRootCause;
+import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertSame;
@@ -65,7 +68,7 @@ public class TestDriver
             throws Exception
     {
         executor = newCachedThreadPool(daemonThreadsNamed("test"));
-        Session session = new Session("user", "source", "catalog", "schema", "address", "agent");
+        ConnectorSession session = new ConnectorSession("user", "source", "catalog", "schema", UTC_KEY, Locale.ENGLISH, "address", "agent");
         driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, session)
                 .addPipelineContext(true, true)
                 .addDriverContext();
@@ -80,7 +83,7 @@ public class TestDriver
     @Test
     public void testNormalFinish()
     {
-        ValuesOperator source = new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(SINGLE_VARBINARY, SINGLE_LONG, SINGLE_LONG)
+        ValuesOperator source = new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(VARCHAR, BIGINT, BIGINT)
                 .addSequencePage(10, 20, 30, 40)
                 .build());
 
@@ -101,7 +104,7 @@ public class TestDriver
     @Test
     public void testAbruptFinish()
     {
-        ValuesOperator source = new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(SINGLE_VARBINARY, SINGLE_LONG, SINGLE_LONG)
+        ValuesOperator source = new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(VARCHAR, BIGINT, BIGINT)
                 .addSequencePage(10, 20, 30, 40)
                 .build());
 
@@ -129,12 +132,12 @@ public class TestDriver
                     @Override
                     public Operator createNewDataStream(OperatorContext operatorContext, Split split, List<ColumnHandle> columns)
                     {
-                        return new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(SINGLE_VARBINARY, SINGLE_LONG, SINGLE_LONG)
+                        return new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(VARCHAR, BIGINT, BIGINT)
                                 .addSequencePage(10, 20, 30, 40)
                                 .build());
                     }
                 },
-                ImmutableList.of(SINGLE_VARBINARY, SINGLE_LONG, SINGLE_LONG),
+                ImmutableList.of(VARCHAR, BIGINT, BIGINT),
                 ImmutableList.<ColumnHandle>of());
 
         MaterializingOperator sink = createSinkOperator(source);
@@ -147,7 +150,7 @@ public class TestDriver
         assertTrue(driver.processFor(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
         assertFalse(driver.isFinished());
 
-        driver.updateSource(new TaskSource(sourceId, ImmutableSet.of(new ScheduledSplit(0, new MockSplit())), true));
+        driver.updateSource(new TaskSource(sourceId, ImmutableSet.of(new ScheduledSplit(0, newMockSplit())), true));
 
         assertFalse(driver.isFinished());
         assertTrue(driver.processFor(new Duration(1, TimeUnit.SECONDS)).isDone());
@@ -232,12 +235,12 @@ public class TestDriver
                     @Override
                     public Operator createNewDataStream(OperatorContext operatorContext, Split split, List<ColumnHandle> columns)
                     {
-                        return new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(SINGLE_VARBINARY, SINGLE_LONG, SINGLE_LONG)
+                        return new ValuesOperator(driverContext.addOperatorContext(0, "values"), rowPagesBuilder(VARCHAR, BIGINT, BIGINT)
                                 .addSequencePage(10, 20, 30, 40)
                                 .build());
                     }
                 },
-                ImmutableList.of(SINGLE_VARBINARY, SINGLE_LONG, SINGLE_LONG),
+                ImmutableList.of(VARCHAR, BIGINT, BIGINT),
                 ImmutableList.<ColumnHandle>of());
 
         BrokenOperator brokenOperator = new BrokenOperator(driverContext.addOperatorContext(0, "source"));
@@ -262,7 +265,7 @@ public class TestDriver
         assertTrue(driver.processFor(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
         assertFalse(driver.isFinished());
 
-        driver.updateSource(new TaskSource(sourceId, ImmutableSet.of(new ScheduledSplit(0, new MockSplit())), true));
+        driver.updateSource(new TaskSource(sourceId, ImmutableSet.of(new ScheduledSplit(0, newMockSplit())), true));
 
         assertFalse(driver.isFinished());
         assertTrue(driver.processFor(new Duration(1, TimeUnit.SECONDS)).isDone());
@@ -280,9 +283,14 @@ public class TestDriver
         }
     }
 
+    private Split newMockSplit()
+    {
+        return new Split("test", new MockSplit());
+    }
+
     private MaterializingOperator createSinkOperator(Operator source)
     {
-        return new MaterializingOperator(driverContext.addOperatorContext(1, "sink"), source.getTupleInfos());
+        return new MaterializingOperator(driverContext.addOperatorContext(1, "sink"), source.getTypes());
     }
 
     private static class BrokenOperator
@@ -346,7 +354,7 @@ public class TestDriver
         }
 
         @Override
-        public List<TupleInfo> getTupleInfos()
+        public List<Type> getTypes()
         {
             return ImmutableList.of();
         }
@@ -402,7 +410,7 @@ public class TestDriver
     }
 
     private static class MockSplit
-            implements Split
+            implements ConnectorSplit
     {
         @Override
         public boolean isRemotelyAccessible()

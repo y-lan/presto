@@ -15,6 +15,7 @@ package com.facebook.presto.connector.dual;
 
 import com.facebook.presto.connector.InternalConnector;
 import com.facebook.presto.spi.ConnectorHandleResolver;
+import com.facebook.presto.spi.ConnectorIndexResolver;
 import com.facebook.presto.spi.ConnectorMetadata;
 import com.facebook.presto.spi.ConnectorOutputHandleResolver;
 import com.facebook.presto.spi.ConnectorRecordSetProvider;
@@ -30,6 +31,8 @@ import static com.google.common.base.Preconditions.checkNotNull;
 public class DualConnector
         implements InternalConnector
 {
+    public static final String CONNECTOR_ID = "dual";
+
     private final NodeManager nodeManager;
 
     @Inject
@@ -76,6 +79,12 @@ public class DualConnector
 
     @Override
     public ConnectorOutputHandleResolver getOutputHandleResolver()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ConnectorIndexResolver getIndexResolver()
     {
         throw new UnsupportedOperationException();
     }

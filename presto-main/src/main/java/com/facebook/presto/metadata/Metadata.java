@@ -13,12 +13,11 @@
  */
 package com.facebook.presto.metadata;
 
-import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.metadata.OperatorInfo.OperatorType;
 import com.facebook.presto.spi.ColumnMetadata;
-import com.facebook.presto.spi.OutputTableHandle;
-import com.facebook.presto.spi.TableHandle;
-import com.facebook.presto.sql.analyzer.Type;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.sql.tree.QualifiedName;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Optional;
 
 import javax.validation.constraints.NotNull;
@@ -29,10 +28,12 @@ import java.util.Map;
 
 public interface Metadata
 {
-    FunctionInfo getFunction(QualifiedName name, List<Type> parameterTypes, boolean approximate);
+    Type getType(String typeName);
+
+    FunctionInfo resolveFunction(QualifiedName name, List<? extends Type> parameterTypes, boolean approximate);
 
     @NotNull
-    FunctionInfo getFunction(Signature handle);
+    FunctionInfo getExactFunction(Signature handle);
 
     boolean isAggregationFunction(QualifiedName name);
 
@@ -41,14 +42,22 @@ public interface Metadata
 
     void addFunctions(List<FunctionInfo> functions);
 
+    void addOperators(List<OperatorInfo> operators);
+
+    OperatorInfo resolveOperator(OperatorType operatorType, List<? extends Type> argumentTypes)
+            throws OperatorNotFoundException;
+
+    OperatorInfo getExactOperator(OperatorType operatorType, Type returnType, List<? extends Type> argumentTypes)
+            throws OperatorNotFoundException;
+
     @NotNull
-    List<String> listSchemaNames(String catalogName);
+    List<String> listSchemaNames(ConnectorSession session, String catalogName);
 
     /**
      * Returns a table handle for the specified table name.
      */
     @NotNull
-    Optional<TableHandle> getTableHandle(QualifiedTableName tableName);
+    Optional<TableHandle> getTableHandle(ConnectorSession session, QualifiedTableName tableName);
 
     /**
      * Return the metadata for the specified table handle.
@@ -62,7 +71,7 @@ public interface Metadata
      * Get the names that match the specified table prefix (never null).
      */
     @NotNull
-    List<QualifiedTableName> listTables(QualifiedTablePrefix prefix);
+    List<QualifiedTableName> listTables(ConnectorSession session, QualifiedTablePrefix prefix);
 
     /**
      * Returns a handle for the specified table column.
@@ -84,7 +93,7 @@ public interface Metadata
      * Returns true iff this catalog supports creation of sampled tables
      *
      */
-    boolean canCreateSampledTables(String catalogName);
+    boolean canCreateSampledTables(ConnectorSession session, String catalogName);
 
     /**
      * Gets all of the columns on the specified table, or an empty map if the columns can not be enumerated.
@@ -106,13 +115,13 @@ public interface Metadata
      * Gets the metadata for all columns that match the specified table prefix.
      */
     @NotNull
-    Map<QualifiedTableName, List<ColumnMetadata>> listTableColumns(QualifiedTablePrefix prefix);
+    Map<QualifiedTableName, List<ColumnMetadata>> listTableColumns(ConnectorSession session, QualifiedTablePrefix prefix);
 
     /**
      * Creates a table using the specified table metadata.
      */
     @NotNull
-    TableHandle createTable(String catalogName, TableMetadata tableMetadata);
+    TableHandle createTable(ConnectorSession session, String catalogName, TableMetadata tableMetadata);
 
     /**
      * Drops the specified table
@@ -124,7 +133,7 @@ public interface Metadata
     /**
      * Begin the atomic creation of a table with data.
      */
-    OutputTableHandle beginCreateTable(String catalogName, TableMetadata tableMetadata);
+    OutputTableHandle beginCreateTable(ConnectorSession session, String catalogName, TableMetadata tableMetadata);
 
     /**
      * Commit a table creation with data after the data is written.

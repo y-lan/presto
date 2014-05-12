@@ -16,27 +16,29 @@ package com.facebook.presto.execution;
 import com.facebook.presto.ScheduledSplit;
 import com.facebook.presto.TaskSource;
 import com.facebook.presto.UnpartitionedPagePartitionFunction;
+import com.facebook.presto.connector.dual.DualConnector;
 import com.facebook.presto.connector.dual.DualDataStreamProvider;
 import com.facebook.presto.connector.dual.DualMetadata;
 import com.facebook.presto.connector.dual.DualSplitManager;
 import com.facebook.presto.event.query.QueryMonitor;
+import com.facebook.presto.index.IndexManager;
+import com.facebook.presto.metadata.ColumnHandle;
 import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.MetadataManager;
 import com.facebook.presto.metadata.MockLocalStorageManager;
+import com.facebook.presto.metadata.Split;
+import com.facebook.presto.metadata.TableHandle;
 import com.facebook.presto.operator.ExchangeClient;
 import com.facebook.presto.operator.RecordSinkManager;
-import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.spi.ConnectorPartitionResult;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.Node;
-import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.SchemaTableName;
-import com.facebook.presto.spi.Split;
-import com.facebook.presto.spi.SplitSource;
-import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.DataStreamManager;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
-import com.facebook.presto.sql.analyzer.Session;
-import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.gen.ExpressionCompiler;
 import com.facebook.presto.sql.planner.LocalExecutionPlanner;
 import com.facebook.presto.sql.planner.PlanFragment;
@@ -46,6 +48,7 @@ import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.planner.plan.PlanFragmentId;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.facebook.presto.sql.planner.plan.TableScanNode;
+import com.facebook.presto.type.TypeRegistry;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
@@ -64,10 +67,13 @@ import org.testng.annotations.Test;
 
 import java.io.File;
 import java.net.URI;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.OutputBuffers.INITIAL_EMPTY_OUTPUT_BUFFERS;
+import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.planner.plan.TableScanNode.GeneratedPartitions;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
@@ -83,7 +89,7 @@ public class TestSqlTaskManager
     private TaskExecutor taskExecutor;
     private LocalExecutionPlanner planner;
     private TaskId taskId;
-    private Session session;
+    private ConnectorSession session;
     private Symbol symbol;
     private ColumnHandle columnHandle;
     private TableHandle tableHandle;
@@ -95,27 +101,31 @@ public class TestSqlTaskManager
             throws Exception
     {
         DualMetadata dualMetadata = new DualMetadata();
-        tableHandle = dualMetadata.getTableHandle(new SchemaTableName("default", DualMetadata.NAME));
+        tableHandle = new TableHandle(DualConnector.CONNECTOR_ID, dualMetadata.getTableHandle(session, new SchemaTableName("default", DualMetadata.NAME)));
         assertNotNull(tableHandle, "tableHandle is null");
 
-        columnHandle = dualMetadata.getColumnHandle(tableHandle, DualMetadata.COLUMN_NAME);
+        columnHandle = new ColumnHandle(DualConnector.CONNECTOR_ID, dualMetadata.getColumnHandle(tableHandle.getConnectorHandle(), DualMetadata.COLUMN_NAME));
         assertNotNull(columnHandle, "columnHandle is null");
         symbol = new Symbol(DualMetadata.COLUMN_NAME);
 
-        MetadataManager metadata = new MetadataManager(new FeaturesConfig());
-        metadata.addInternalSchemaMetadata(MetadataManager.INTERNAL_CONNECTOR_ID, dualMetadata);
+        MetadataManager metadata = new MetadataManager(new FeaturesConfig(), new TypeRegistry());
+        metadata.addGlobalSchemaMetadata(DualConnector.CONNECTOR_ID, dualMetadata);
 
         DualSplitManager dualSplitManager = new DualSplitManager(new InMemoryNodeManager());
-        PartitionResult partitionResult = dualSplitManager.getPartitions(tableHandle, TupleDomain.all());
+        ConnectorPartitionResult partitionResult = dualSplitManager.getPartitions(tableHandle.getConnectorHandle(), TupleDomain.<ConnectorColumnHandle>all());
 
-        SplitSource splitSource = dualSplitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions());
+        SplitSource splitSource = new ConnectorAwareSplitSource(DualConnector.CONNECTOR_ID, dualSplitManager.getPartitionSplits(tableHandle.getConnectorHandle(), partitionResult.getPartitions()));
         split = Iterables.getOnlyElement(splitSource.getNextBatch(1));
         assertTrue(splitSource.isFinished());
+
+        DataStreamManager dataStreamProvider = new DataStreamManager();
+        dataStreamProvider.addConnectorDataStreamProvider(DualConnector.CONNECTOR_ID, new DualDataStreamProvider());
 
         planner = new LocalExecutionPlanner(
                 new NodeInfo("test"),
                 metadata,
-                new DataStreamManager(new DualDataStreamProvider()),
+                dataStreamProvider,
+                new IndexManager(),
                 new MockLocalStorageManager(new File("target/temp")),
                 new RecordSinkManager(),
                 new MockExchangeClientSupplier(),
@@ -141,14 +151,14 @@ public class TestSqlTaskManager
                         ImmutableMap.of(symbol, columnHandle),
                         null,
                         Optional.<GeneratedPartitions>absent()),
-                ImmutableMap.<Symbol, Type>of(symbol, Type.VARCHAR),
+                ImmutableMap.<Symbol, Type>of(symbol, VARCHAR),
                 PlanDistribution.SOURCE,
                 tableScanNodeId,
                 OutputPartitioning.NONE,
                 ImmutableList.<Symbol>of());
 
         taskId = new TaskId("query", "stage", "task");
-        session = new Session("user", "test", "default", "default", "test", "test");
+        session = new ConnectorSession("user", "test", "default", "default", UTC_KEY, Locale.ENGLISH, "test", "test");
     }
 
     @AfterMethod
@@ -176,7 +186,7 @@ public class TestSqlTaskManager
         taskInfo = sqlTaskManager.updateTask(session,
                 taskId,
                 testFragment,
-                ImmutableList.<TaskSource>of(new TaskSource(tableScanNodeId, ImmutableSet.<ScheduledSplit>of(), true)),
+                ImmutableList.of(new TaskSource(tableScanNodeId, ImmutableSet.<ScheduledSplit>of(), true)),
                 INITIAL_EMPTY_OUTPUT_BUFFERS.withNoMoreBufferIds());
         assertEquals(taskInfo.getState(), TaskState.FINISHED);
 
@@ -191,7 +201,7 @@ public class TestSqlTaskManager
         TaskInfo taskInfo = sqlTaskManager.updateTask(session,
                 taskId,
                 testFragment,
-                ImmutableList.<TaskSource>of(new TaskSource(tableScanNodeId, ImmutableSet.of(new ScheduledSplit(0, split)), true)),
+                ImmutableList.of(new TaskSource(tableScanNodeId, ImmutableSet.of(new ScheduledSplit(0, split)), true)),
                 INITIAL_EMPTY_OUTPUT_BUFFERS.withBuffer("out", new UnpartitionedPagePartitionFunction()).withNoMoreBufferIds());
         assertEquals(taskInfo.getState(), TaskState.RUNNING);
 
@@ -247,7 +257,7 @@ public class TestSqlTaskManager
         TaskInfo taskInfo = sqlTaskManager.updateTask(session,
                 taskId,
                 testFragment,
-                ImmutableList.<TaskSource>of(new TaskSource(tableScanNodeId, ImmutableSet.of(new ScheduledSplit(0, split)), true)),
+                ImmutableList.of(new TaskSource(tableScanNodeId, ImmutableSet.of(new ScheduledSplit(0, split)), true)),
                 INITIAL_EMPTY_OUTPUT_BUFFERS.withBuffer("out", new UnpartitionedPagePartitionFunction()).withNoMoreBufferIds());
         assertEquals(taskInfo.getState(), TaskState.RUNNING);
 

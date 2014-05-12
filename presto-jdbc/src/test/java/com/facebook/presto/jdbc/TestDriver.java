@@ -17,22 +17,29 @@ import com.facebook.presto.server.testing.TestingPrestoServer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.log.Logging;
+import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.sql.Connection;
+import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Set;
 
+import static com.facebook.presto.server.testing.TestingPrestoServer.TEST_CATALOG;
 import static java.lang.String.format;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -42,6 +49,9 @@ import static org.testng.Assert.fail;
 
 public class TestDriver
 {
+    private static final DateTimeZone ASIA_ORAL_ZONE = DateTimeZone.forID("Asia/Oral");
+    private static final GregorianCalendar ASIA_ORAL_CALENDAR = new GregorianCalendar(ASIA_ORAL_ZONE.toTimeZone());
+
     private TestingPrestoServer server;
 
     @BeforeClass
@@ -88,6 +98,85 @@ public class TestDriver
     }
 
     @Test
+    public void testTypes()
+            throws Exception
+    {
+        try (Connection connection = createConnection()) {
+            try (Statement statement = connection.createStatement()) {
+                try (ResultSet rs = statement.executeQuery("SELECT " +
+                        "  TIME '3:04:05' as a" +
+                        ", TIME '6:07:08 +06:17' as b" +
+                        ", TIME '9:10:11 Europe/Berlin' as c" +
+                        ", TIMESTAMP '2001-02-03 3:04:05' as d" +
+                        ", TIMESTAMP '2004-05-06 6:07:08 +06:17' as e" +
+                        ", TIMESTAMP '2007-08-09 9:10:11 Europe/Berlin' as f" +
+                        ", DATE '2013-03-22' as g" +
+                        ", INTERVAL '123-11' YEAR TO MONTH as h" +
+                        ", INTERVAL '11 22:33:44.555' DAY TO SECOND as i" +
+                        "")) {
+                    assertTrue(rs.next());
+
+                    assertEquals(rs.getTime(1), new Time(new DateTime(1970, 1, 1, 3, 4, 5).getMillis()));
+                    assertEquals(rs.getTime(1, ASIA_ORAL_CALENDAR), new Time(new DateTime(1970, 1, 1, 3, 4, 5, ASIA_ORAL_ZONE).getMillis()));
+                    assertEquals(rs.getObject(1), new Time(new DateTime(1970, 1, 1, 3, 4, 5).getMillis()));
+                    assertEquals(rs.getTime("a"), new Time(new DateTime(1970, 1, 1, 3, 4, 5).getMillis()));
+                    assertEquals(rs.getTime("a", ASIA_ORAL_CALENDAR), new Time(new DateTime(1970, 1, 1, 3, 4, 5, ASIA_ORAL_ZONE).getMillis()));
+                    assertEquals(rs.getObject("a"), new Time(new DateTime(1970, 1, 1, 3, 4, 5).getMillis()));
+
+                    assertEquals(rs.getTime(2), new Time(new DateTime(1970, 1, 1, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getTime(2, ASIA_ORAL_CALENDAR), new Time(new DateTime(1970, 1, 1, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getObject(2), new Time(new DateTime(1970, 1, 1, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getTime("b"), new Time(new DateTime(1970, 1, 1, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getTime("b", ASIA_ORAL_CALENDAR), new Time(new DateTime(1970, 1, 1, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getObject("b"), new Time(new DateTime(1970, 1, 1, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+
+                    assertEquals(rs.getTime(3), new Time(new DateTime(1970, 1, 1, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getTime(3, ASIA_ORAL_CALENDAR), new Time(new DateTime(1970, 1, 1, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getObject(3), new Time(new DateTime(1970, 1, 1, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getTime("c"), new Time(new DateTime(1970, 1, 1, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getTime("c", ASIA_ORAL_CALENDAR), new Time(new DateTime(1970, 1, 1, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getObject("c"), new Time(new DateTime(1970, 1, 1, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+
+                    assertEquals(rs.getTimestamp(4), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5).getMillis()));
+                    assertEquals(rs.getTimestamp(4, ASIA_ORAL_CALENDAR), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5, ASIA_ORAL_ZONE).getMillis()));
+                    assertEquals(rs.getObject(4), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5).getMillis()));
+                    assertEquals(rs.getTimestamp("d"), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5).getMillis()));
+                    assertEquals(rs.getTimestamp("d", ASIA_ORAL_CALENDAR), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5, ASIA_ORAL_ZONE).getMillis()));
+                    assertEquals(rs.getObject("d"), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5).getMillis()));
+
+                    assertEquals(rs.getTimestamp(5), new Timestamp(new DateTime(2004, 5, 6, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getTimestamp(5, ASIA_ORAL_CALENDAR), new Timestamp(new DateTime(2004, 5, 6, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getObject(5), new Timestamp(new DateTime(2004, 5, 6, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getTimestamp("e"), new Timestamp(new DateTime(2004, 5, 6, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getTimestamp("e", ASIA_ORAL_CALENDAR), new Timestamp(new DateTime(2004, 5, 6, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+                    assertEquals(rs.getObject("e"), new Timestamp(new DateTime(2004, 5, 6, 6, 7, 8, DateTimeZone.forOffsetHoursMinutes(6, 17)).getMillis()));
+
+                    assertEquals(rs.getTimestamp(6), new Timestamp(new DateTime(2007, 8, 9, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getTimestamp(6, ASIA_ORAL_CALENDAR), new Timestamp(new DateTime(2007, 8, 9, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getObject(6), new Timestamp(new DateTime(2007, 8, 9, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getTimestamp("f"), new Timestamp(new DateTime(2007, 8, 9, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getTimestamp("f", ASIA_ORAL_CALENDAR), new Timestamp(new DateTime(2007, 8, 9, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+                    assertEquals(rs.getObject("f"), new Timestamp(new DateTime(2007, 8, 9, 9, 10, 11, DateTimeZone.forID("Europe/Berlin")).getMillis()));
+
+                    assertEquals(rs.getDate(7), new Date(new DateTime(2013, 3, 22, 0, 0).getMillis()));
+                    assertEquals(rs.getDate(7, ASIA_ORAL_CALENDAR), new Date(new DateTime(2013, 3, 22, 0, 0, ASIA_ORAL_ZONE).getMillis()));
+                    assertEquals(rs.getObject(7), new Date(new DateTime(2013, 3, 22, 0, 0).getMillis()));
+                    assertEquals(rs.getDate("g"), new Date(new DateTime(2013, 3, 22, 0, 0).getMillis()));
+                    assertEquals(rs.getDate("g", ASIA_ORAL_CALENDAR), new Date(new DateTime(2013, 3, 22, 0, 0, ASIA_ORAL_ZONE).getMillis()));
+                    assertEquals(rs.getObject("g"), new Date(new DateTime(2013, 3, 22, 0, 0).getMillis()));
+
+                    assertEquals(rs.getObject(8), new PrestoIntervalYearMonth(123, 11));
+                    assertEquals(rs.getObject("h"), new PrestoIntervalYearMonth(123, 11));
+                    assertEquals(rs.getObject(9), new PrestoIntervalDayTime(11, 22, 33, 44, 555));
+                    assertEquals(rs.getObject("i"), new PrestoIntervalDayTime(11, 22, 33, 44, 555));
+
+                    assertFalse(rs.next());
+                }
+            }
+        }
+    }
+
+    @Test
     public void testGetCatalogs()
             throws Exception
     {
@@ -115,7 +204,7 @@ public class TestDriver
                 assertGetSchemasResult(rs, 2);
             }
 
-            try (ResultSet rs = connection.getMetaData().getSchemas("default", null)) {
+            try (ResultSet rs = connection.getMetaData().getSchemas(TEST_CATALOG, null)) {
                 assertGetSchemasResult(rs, 2);
             }
 
@@ -124,7 +213,7 @@ public class TestDriver
                 assertGetSchemasResult(rs, 0);
             }
 
-            try (ResultSet rs = connection.getMetaData().getSchemas("default", "sys")) {
+            try (ResultSet rs = connection.getMetaData().getSchemas(TEST_CATALOG, "sys")) {
                 assertGetSchemasResult(rs, 1);
             }
 
@@ -152,7 +241,7 @@ public class TestDriver
                 assertGetSchemasResult(rs, 0);
             }
 
-            try (ResultSet rs = connection.getMetaData().getSchemas("default", "unknown")) {
+            try (ResultSet rs = connection.getMetaData().getSchemas(TEST_CATALOG, "unknown")) {
                 assertGetSchemasResult(rs, 0);
             }
 
@@ -162,7 +251,7 @@ public class TestDriver
         }
     }
 
-    private void assertGetSchemasResult(ResultSet rs, int expectedRows)
+    private static void assertGetSchemasResult(ResultSet rs, int expectedRows)
             throws SQLException
     {
         assertRowCount(rs, expectedRows);
@@ -193,7 +282,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", null, null, null)) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, null, null, null)) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -214,7 +303,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", null, null)) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", null, null)) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -225,7 +314,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "", null, null)) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "", null, null)) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -234,7 +323,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "tables", null)) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "tables", null)) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -245,7 +334,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "tables", new String[] {"BASE TABLE"})) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "tables", new String[] {"BASE TABLE"})) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -289,7 +378,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "inf%", "tables", null)) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "inf%", "tables", null)) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -300,7 +389,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "tab%", null)) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "tab%", null)) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -323,7 +412,7 @@ public class TestDriver
 
         // todo why does Presto require that the schema name be lower case
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "unknown", "tables", new String[] {"BASE TABLE"})) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "unknown", "tables", new String[] {"BASE TABLE"})) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -334,7 +423,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "unknown", new String[] {"BASE TABLE"})) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "unknown", new String[] {"BASE TABLE"})) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -345,7 +434,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "tables", new String[] {"unknown"})) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "tables", new String[] {"unknown"})) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -356,7 +445,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "tables", new String[] {"unknown", "BASE TABLE"})) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "tables", new String[] {"unknown", "BASE TABLE"})) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -367,7 +456,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getTables("default", "information_schema", "tables", new String[] {})) {
+            try (ResultSet rs = connection.getMetaData().getTables(TEST_CATALOG, "information_schema", "tables", new String[] {})) {
                 assertTableMetadata(rs);
 
                 Set<List<Object>> rows = ImmutableSet.copyOf(readRows(rs));
@@ -380,10 +469,10 @@ public class TestDriver
 
     private static List<Object> getTablesRow(String schema, String table)
     {
-        return ImmutableList.<Object>of("default", schema, table, "BASE TABLE", "", "", "", "", "", "");
+        return ImmutableList.<Object>of(TEST_CATALOG, schema, table, "BASE TABLE", "", "", "", "", "", "");
     }
 
-    private void assertTableMetadata(ResultSet rs)
+    private static void assertTableMetadata(ResultSet rs)
             throws SQLException
     {
         ResultSetMetaData metadata = rs.getMetaData();
@@ -450,7 +539,7 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getColumns("default", null, "tables", "column_name")) {
+            try (ResultSet rs = connection.getMetaData().getColumns(TEST_CATALOG, null, "tables", "column_name")) {
                 assertColumnMetadata(rs);
             }
         }
@@ -462,31 +551,31 @@ public class TestDriver
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getColumns("default", "information_schema", "tables", "column_name")) {
+            try (ResultSet rs = connection.getMetaData().getColumns(TEST_CATALOG, "information_schema", "tables", "column_name")) {
                 assertColumnMetadata(rs);
             }
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getColumns("default", "inf%", "tables", "column_name")) {
+            try (ResultSet rs = connection.getMetaData().getColumns(TEST_CATALOG, "inf%", "tables", "column_name")) {
                 assertColumnMetadata(rs);
             }
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getColumns("default", "information_schema", "tab%", "column_name")) {
+            try (ResultSet rs = connection.getMetaData().getColumns(TEST_CATALOG, "information_schema", "tab%", "column_name")) {
                 assertColumnMetadata(rs);
             }
         }
 
         try (Connection connection = createConnection()) {
-            try (ResultSet rs = connection.getMetaData().getColumns("default", "information_schema", "tables", "col%")) {
+            try (ResultSet rs = connection.getMetaData().getColumns(TEST_CATALOG, "information_schema", "tables", "col%")) {
                 assertColumnMetadata(rs);
             }
         }
     }
 
-    private void assertColumnMetadata(ResultSet rs)
+    private static void assertColumnMetadata(ResultSet rs)
             throws SQLException
     {
         ResultSetMetaData metadata = rs.getMetaData();
@@ -663,26 +752,26 @@ public class TestDriver
 
         connection = DriverManager.getConnection(prefix + "/a/", "test", null);
         assertEquals(connection.getCatalog(), "a");
-        assertEquals(connection.getSchema(), "default");
+        assertEquals(connection.getSchema(), TEST_CATALOG);
 
         connection = DriverManager.getConnection(prefix + "/a", "test", null);
         assertEquals(connection.getCatalog(), "a");
-        assertEquals(connection.getSchema(), "default");
+        assertEquals(connection.getSchema(), TEST_CATALOG);
 
         connection = DriverManager.getConnection(prefix + "/", "test", null);
-        assertEquals(connection.getCatalog(), "default");
-        assertEquals(connection.getSchema(), "default");
+        assertEquals(connection.getCatalog(), TEST_CATALOG);
+        assertEquals(connection.getSchema(), TEST_CATALOG);
 
-        connection = DriverManager.getConnection(prefix + "", "test", null);
-        assertEquals(connection.getCatalog(), "default");
-        assertEquals(connection.getSchema(), "default");
+        connection = DriverManager.getConnection(prefix, "test", null);
+        assertEquals(connection.getCatalog(), TEST_CATALOG);
+        assertEquals(connection.getSchema(), TEST_CATALOG);
     }
 
     @Test
     public void testConnectionWithCatalogAndSchema()
             throws Exception
     {
-        try (Connection connection = createConnection("default", "information_schema")) {
+        try (Connection connection = createConnection(TEST_CATALOG, "information_schema")) {
             try (Statement statement = connection.createStatement()) {
                 try (ResultSet rs = statement.executeQuery("" +
                         "SELECT table_catalog, table_schema " +
@@ -693,7 +782,7 @@ public class TestDriver
                     assertEquals(metadata.getColumnLabel(1), "table_catalog");
                     assertEquals(metadata.getColumnLabel(2), "table_schema");
                     assertTrue(rs.next());
-                    assertEquals(rs.getString("table_catalog"), "default");
+                    assertEquals(rs.getString("table_catalog"), TEST_CATALOG);
                 }
             }
         }
@@ -703,7 +792,7 @@ public class TestDriver
     public void testConnectionWithCatalog()
             throws Exception
     {
-        try (Connection connection = createConnection("default")) {
+        try (Connection connection = createConnection(TEST_CATALOG)) {
             try (Statement statement = connection.createStatement()) {
                 try (ResultSet rs = statement.executeQuery("" +
                         "SELECT table_catalog, table_schema " +
@@ -714,7 +803,7 @@ public class TestDriver
                     assertEquals(metadata.getColumnLabel(1), "table_catalog");
                     assertEquals(metadata.getColumnLabel(2), "table_schema");
                     assertTrue(rs.next());
-                    assertEquals(rs.getString("table_catalog"), "default");
+                    assertEquals(rs.getString("table_catalog"), TEST_CATALOG);
                 }
             }
         }

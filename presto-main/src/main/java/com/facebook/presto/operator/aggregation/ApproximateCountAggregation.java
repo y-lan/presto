@@ -13,13 +13,13 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.block.Block;
-import com.facebook.presto.block.BlockBuilder;
-import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
 import com.facebook.presto.operator.Page;
-import com.facebook.presto.tuple.TupleInfo;
-import com.facebook.presto.tuple.TupleInfo.Type;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockBuilderStatus;
+import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.util.array.LongBigArray;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -30,9 +30,11 @@ import java.util.List;
 
 import static com.facebook.presto.operator.aggregation.ApproximateUtils.countError;
 import static com.facebook.presto.operator.aggregation.ApproximateUtils.formatApproximateResult;
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
+import static io.airlift.slice.SizeOf.SIZE_OF_INT;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 
 public class ApproximateCountAggregation
@@ -50,16 +52,16 @@ public class ApproximateCountAggregation
     }
 
     @Override
-    public TupleInfo getFinalTupleInfo()
+    public Type getFinalType()
     {
-        return SINGLE_VARBINARY;
+        return VARCHAR;
     }
 
     @Override
-    public TupleInfo getIntermediateTupleInfo()
+    public Type getIntermediateType()
     {
         // TODO: Change this to fixed width, once we have a better type system
-        return SINGLE_VARBINARY;
+        return VARCHAR;
     }
 
     @Override
@@ -106,15 +108,15 @@ public class ApproximateCountAggregation
         }
 
         @Override
-        public TupleInfo getFinalTupleInfo()
+        public Type getFinalType()
         {
-            return SINGLE_VARBINARY;
+            return VARCHAR;
         }
 
         @Override
-        public TupleInfo getIntermediateTupleInfo()
+        public Type getIntermediateType()
         {
-            return SINGLE_VARBINARY;
+            return VARCHAR;
         }
 
         @Override
@@ -161,7 +163,7 @@ public class ApproximateCountAggregation
         @Override
         public void evaluateIntermediate(int groupId, BlockBuilder output)
         {
-            output.append(createIntermediate(counts.get(groupId), samples.get(groupId)));
+            output.appendSlice(createIntermediate(counts.get(groupId), samples.get(groupId)));
         }
 
         @Override
@@ -169,7 +171,8 @@ public class ApproximateCountAggregation
         {
             long count = counts.get(groupId);
             long samples = this.samples.get(groupId);
-            output.append(formatApproximateResult(count, countError(samples, count), confidence, true));
+            String result = formatApproximateResult(count, countError(samples, count), confidence, true);
+            output.appendSlice(Slices.utf8Slice(result));
         }
     }
 
@@ -203,15 +206,21 @@ public class ApproximateCountAggregation
         }
 
         @Override
-        public TupleInfo getFinalTupleInfo()
+        public long getEstimatedSize()
         {
-            return SINGLE_VARBINARY;
+            return 3 * SIZE_OF_LONG + SIZE_OF_INT + SIZE_OF_DOUBLE;
         }
 
         @Override
-        public TupleInfo getIntermediateTupleInfo()
+        public Type getFinalType()
         {
-            return SINGLE_VARBINARY;
+            return VARCHAR;
+        }
+
+        @Override
+        public Type getIntermediateType()
+        {
+            return VARCHAR;
         }
 
         @Override
@@ -250,14 +259,15 @@ public class ApproximateCountAggregation
         @Override
         public final Block evaluateIntermediate()
         {
-            return new BlockBuilder(SINGLE_VARBINARY).append(createIntermediate(count, samples)).build();
+            return VARCHAR.createBlockBuilder(new BlockBuilderStatus()).appendSlice(createIntermediate(count, samples)).build();
         }
 
         @Override
         public final Block evaluateFinal()
         {
-            return new BlockBuilder(getFinalTupleInfo())
-                    .append(formatApproximateResult(count, countError(samples, count), confidence, true))
+            String result = formatApproximateResult(count, countError(samples, count), confidence, true);
+            return getFinalType().createBlockBuilder(new BlockBuilderStatus())
+                    .appendSlice(Slices.utf8Slice(result))
                     .build();
         }
     }

@@ -16,6 +16,7 @@ package com.facebook.presto.client;
 import com.google.common.base.Objects;
 
 import java.net.URI;
+import java.util.Locale;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -27,6 +28,8 @@ public class ClientSession
     private final String source;
     private final String catalog;
     private final String schema;
+    private final String timeZoneId;
+    private final Locale locale;
     private final boolean debug;
 
     public static ClientSession withCatalog(ClientSession session, String catalog)
@@ -38,6 +41,8 @@ public class ClientSession
                 session.getSource(),
                 catalog,
                 session.getSchema(),
+                session.getTimeZoneId(),
+                session.getLocale(),
                 session.isDebug());
     }
 
@@ -50,15 +55,17 @@ public class ClientSession
                 session.getSource(),
                 session.getCatalog(),
                 schema,
+                session.getTimeZoneId(),
+                session.getLocale(),
                 session.isDebug());
     }
 
-    public ClientSession(URI server, String user, String source, String catalog, String schema, boolean debug)
+    public ClientSession(URI server, String user, String source, String catalog, String schema, String timeZoneId, Locale locale, boolean debug)
     {
-        this(server, user, "", source, catalog, schema, debug);
+        this(server, user, "", source, catalog, schema, timeZoneId, locale, debug);
     }
 
-    public ClientSession(URI server, String user, String identify, String source, String catalog, String schema, boolean debug)
+    public ClientSession(URI server, String user, String identify, String source, String catalog, String schema, String timeZoneId, Locale locale, boolean debug)
     {
         this.server = checkNotNull(server, "server is null");
         this.user = user;
@@ -66,6 +73,8 @@ public class ClientSession
         this.source = source;
         this.catalog = catalog;
         this.schema = schema;
+        this.locale = locale;
+        this.timeZoneId = checkNotNull(timeZoneId, "timeZoneId is null");
         this.debug = debug;
     }
 
@@ -99,6 +108,16 @@ public class ClientSession
         return schema;
     }
 
+    public String getTimeZoneId()
+    {
+        return timeZoneId;
+    }
+
+    public Locale getLocale()
+    {
+        return locale;
+    }
+
     public boolean isDebug()
     {
         return debug;
@@ -112,6 +131,8 @@ public class ClientSession
                 .add("user", user)
                 .add("catalog", catalog)
                 .add("schema", schema)
+                .add("timeZone", timeZoneId)
+                .add("locale", locale)
                 .add("debug", debug)
                 .toString();
     }

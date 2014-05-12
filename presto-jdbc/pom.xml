@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.facebook.presto</groupId>
         <artifactId>presto-root</artifactId>
-        <version>0.66-SNAPSHOT</version>
+        <version>0.69-SNAPSHOT</version>
     </parent>
 
     <artifactId>presto-jdbc</artifactId>
@@ -80,6 +80,11 @@
                     <artifactId>guice-multibindings</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>joda-time</groupId>
+            <artifactId>joda-time</artifactId>
         </dependency>
 
         <dependency>

@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.metadata;
 
-import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockIterable;
 import com.facebook.presto.block.BlockUtils;
 import com.facebook.presto.execution.TaskId;
@@ -24,8 +23,10 @@ import com.facebook.presto.operator.TaskContext;
 import com.facebook.presto.serde.BlocksFileEncoding;
 import com.facebook.presto.serde.BlocksFileReader;
 import com.facebook.presto.serde.BlocksFileStats;
-import com.facebook.presto.spi.ColumnHandle;
-import com.facebook.presto.sql.analyzer.Session;
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockEncodingSerde;
+import com.facebook.presto.spi.ConnectorColumnHandle;
 import com.facebook.presto.util.KeyBoundedExecutor;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
@@ -52,15 +53,17 @@ import javax.annotation.PreDestroy;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 
-import static com.facebook.presto.util.Threads.threadsNamed;
+import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static io.airlift.concurrent.Threads.threadsNamed;
 import static java.lang.String.format;
 import static java.nio.file.Files.createDirectories;
 import static java.util.concurrent.Executors.newFixedThreadPool;
@@ -80,6 +83,7 @@ public class DatabaseLocalStorageManager
     private final KeyBoundedExecutor<UUID> shardBoundedExecutor;
 
     private final IDBI dbi;
+    private final BlockEncodingSerde blockEncodingSerde;
     private final File baseStorageDir;
     private final File baseStagingDir;
     private final StorageManagerDao dao;
@@ -101,9 +105,11 @@ public class DatabaseLocalStorageManager
     private final BlocksFileEncoding defaultEncoding;
 
     @Inject
-    public DatabaseLocalStorageManager(@ForLocalStorageManager IDBI dbi, DatabaseLocalStorageManagerConfig config)
+    public DatabaseLocalStorageManager(@ForLocalStorageManager IDBI dbi, BlockEncodingSerde blockEncodingSerde, DatabaseLocalStorageManagerConfig config)
             throws IOException
     {
+        this.blockEncodingSerde = checkNotNull(blockEncodingSerde, "blockEncodingManager is null");
+
         checkNotNull(config, "config is null");
         File baseDataDir = checkNotNull(config.getDataDirectory(), "dataDirectory is null");
         this.baseStorageDir = createDirectory(new File(baseDataDir, "storage"));
@@ -139,14 +145,14 @@ public class DatabaseLocalStorageManager
     }
 
     @Override
-    public ColumnFileHandle createStagingFileHandles(UUID shardUuid, List<? extends ColumnHandle> columnHandles)
+    public ColumnFileHandle createStagingFileHandles(UUID shardUuid, List<? extends ConnectorColumnHandle> columnHandles)
             throws IOException
     {
         File shardPath = getShardPath(baseStagingDir, shardUuid);
 
-        ColumnFileHandle.Builder builder = ColumnFileHandle.builder(shardUuid);
+        ColumnFileHandle.Builder builder = ColumnFileHandle.builder(shardUuid, blockEncodingSerde);
 
-        for (ColumnHandle columnHandle : columnHandles) {
+        for (ConnectorColumnHandle columnHandle : columnHandles) {
             File file = getColumnFile(shardPath, columnHandle, defaultEncoding);
             Files.createParentDirs(file);
             builder.addColumn(columnHandle, file, defaultEncoding);
@@ -180,17 +186,17 @@ public class DatabaseLocalStorageManager
         File shardPath = getShardPath(baseStorageDir, shardUuid);
 
         ImmutableList.Builder<BlockIterable> sourcesBuilder = ImmutableList.builder();
-        ColumnFileHandle.Builder builder = ColumnFileHandle.builder(shardUuid);
+        ColumnFileHandle.Builder builder = ColumnFileHandle.builder(shardUuid, blockEncodingSerde);
 
-        for (Map.Entry<ColumnHandle, File> entry : columnFileHandle.getFiles().entrySet()) {
+        for (Map.Entry<ConnectorColumnHandle, File> entry : columnFileHandle.getFiles().entrySet()) {
             File file = entry.getValue();
-            ColumnHandle columnHandle = entry.getKey();
+            ConnectorColumnHandle columnHandle = entry.getKey();
 
             if (file.length() > 0) {
                 Slice slice = mappedFileCache.getUnchecked(file.getAbsoluteFile());
                 checkState(file.length() == slice.length(), "File %s, length %s was mapped to Slice length %s", file.getAbsolutePath(), file.length(), slice.length());
                 // Compute optimal encoding from stats
-                BlocksFileReader blocks = BlocksFileReader.readBlocks(slice);
+                BlocksFileReader blocks = BlocksFileReader.readBlocks(blockEncodingSerde, slice);
                 BlocksFileStats stats = blocks.getStats();
                 boolean rleEncode = stats.getAvgRunLength() > RUN_LENGTH_AVERAGE_CUTOFF;
                 boolean dicEncode = stats.getUniqueCount() < DICTIONARY_CARDINALITY_CUTOFF;
@@ -238,7 +244,7 @@ public class DatabaseLocalStorageManager
 
         if (!sources.isEmpty()) {
             // Throw out any stats generated by the optimization step
-            Session session = new Session("user", "source", "catalog", "schema", "address", "agent");
+            ConnectorSession session = new ConnectorSession("user", "source", "catalog", "schema", UTC_KEY, Locale.ENGLISH, "address", "agent");
             OperatorContext operatorContext = new TaskContext(new TaskId("query", "stage", "task"), executor, session)
                     .addPipelineContext(true, true)
                     .addDriverContext()
@@ -302,7 +308,7 @@ public class DatabaseLocalStorageManager
                 .toFile();
     }
 
-    private static File getColumnFile(File shardPath, ColumnHandle columnHandle, BlocksFileEncoding encoding)
+    private static File getColumnFile(File shardPath, ConnectorColumnHandle columnHandle, BlocksFileEncoding encoding)
     {
         checkState(columnHandle instanceof NativeColumnHandle, "Can only import in a native column");
         long columnId = ((NativeColumnHandle) columnHandle).getColumnId();
@@ -319,8 +325,8 @@ public class DatabaseLocalStorageManager
             {
                 StorageManagerDao dao = handle.attach(StorageManagerDao.class);
 
-                for (Map.Entry<ColumnHandle, File> entry : columnFileHandle.getFiles().entrySet()) {
-                    ColumnHandle columnHandle = entry.getKey();
+                for (Map.Entry<ConnectorColumnHandle, File> entry : columnFileHandle.getFiles().entrySet()) {
+                    ConnectorColumnHandle columnHandle = entry.getKey();
                     File file = entry.getValue();
 
                     checkState(columnHandle instanceof NativeColumnHandle, "Can only import in a native column");
@@ -333,7 +339,7 @@ public class DatabaseLocalStorageManager
     }
 
     @Override
-    public BlockIterable getBlocks(UUID shardUuid, ColumnHandle columnHandle)
+    public BlockIterable getBlocks(UUID shardUuid, ConnectorColumnHandle columnHandle)
     {
         checkNotNull(columnHandle);
         checkState(columnHandle instanceof NativeColumnHandle, "Can only load blocks from a native column");
@@ -361,7 +367,7 @@ public class DatabaseLocalStorageManager
             public Iterable<? extends Block> apply(File file)
             {
                 Slice slice = mappedFileCache.getUnchecked(file.getAbsoluteFile());
-                return BlocksFileReader.readBlocks(slice);
+                return BlocksFileReader.readBlocks(blockEncodingSerde, slice);
             }
         }));
 

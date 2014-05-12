@@ -14,15 +14,17 @@
 package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.execution.SampledSplitSource;
-import com.facebook.presto.spi.Partition;
-import com.facebook.presto.spi.PartitionResult;
-import com.facebook.presto.spi.SplitSource;
+import com.facebook.presto.execution.SplitSource;
+import com.facebook.presto.metadata.ColumnHandle;
+import com.facebook.presto.metadata.Partition;
+import com.facebook.presto.metadata.PartitionResult;
 import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.DistinctLimitNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
+import com.facebook.presto.sql.planner.plan.IndexJoinNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
 import com.facebook.presto.sql.planner.plan.LimitNode;
 import com.facebook.presto.sql.planner.plan.MarkDistinctNode;
@@ -98,7 +100,7 @@ public class DistributedExecutionPlanner
                 return node.getGeneratedPartitions().get().getPartitions();
             }
 
-            PartitionResult allPartitions = splitManager.getPartitions(node.getTable(), Optional.<TupleDomain>absent());
+            PartitionResult allPartitions = splitManager.getPartitions(node.getTable(), Optional.<TupleDomain<ColumnHandle>>absent());
             return allPartitions.getPartitions();
         }
 
@@ -122,6 +124,12 @@ public class DistributedExecutionPlanner
                 throw new IllegalArgumentException("Both source and filteringSource semi join nodes are partitioned"); // TODO: "partitioned" may not be the right term
             }
             return sourceSplits.isPresent() ? sourceSplits : filteringSourceSplits;
+        }
+
+        @Override
+        public Optional<SplitSource> visitIndexJoin(IndexJoinNode node, Void context)
+        {
+            return node.getProbeSource().accept(this, context);
         }
 
         @Override

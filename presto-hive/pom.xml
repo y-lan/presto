@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.facebook.presto</groupId>
         <artifactId>presto-root</artifactId>
-        <version>0.66-SNAPSHOT</version>
+        <version>0.69-SNAPSHOT</version>
     </parent>
 
     <artifactId>presto-hive</artifactId>
@@ -32,7 +32,6 @@
         <dependency>
             <groupId>com.facebook.presto.hive</groupId>
             <artifactId>hive-apache</artifactId>
-            <version>0.5-SNAPSHOT</version>
         </dependency>
 
         <dependency>
@@ -50,6 +49,12 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>slice</artifactId>
             <scope>provided</scope>
         </dependency>
 

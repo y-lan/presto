@@ -13,17 +13,19 @@
  */
 package com.facebook.presto.tpch;
 
-import com.facebook.presto.spi.ColumnHandle;
-import com.facebook.presto.spi.ColumnType;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.RecordSet;
-import com.facebook.presto.spi.Split;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.spi.ConnectorSplit;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
+import io.airlift.slice.Slice;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class SampledTpchRecordSetProvider
@@ -40,24 +42,24 @@ public class SampledTpchRecordSetProvider
     }
 
     @Override
-    public RecordSet getRecordSet(Split split, List<? extends ColumnHandle> columns)
+    public RecordSet getRecordSet(ConnectorSplit split, List<? extends ConnectorColumnHandle> columns)
     {
         int sampleWeightField = -1;
         for (int i = 0; i < columns.size(); i++) {
-            ColumnHandle column = columns.get(i);
+            ConnectorColumnHandle column = columns.get(i);
             if (column instanceof TpchColumnHandle && ((TpchColumnHandle) column).getColumnName().equals(SampledTpchMetadata.SAMPLE_WEIGHT_COLUMN_NAME)) {
                 sampleWeightField = i;
                 break;
             }
         }
-        List<? extends ColumnHandle> delegatedColumns = new ArrayList<>(columns);
+        List<? extends ConnectorColumnHandle> delegatedColumns = new ArrayList<>(columns);
         if (sampleWeightField > -1) {
             delegatedColumns.remove(sampleWeightField);
             RecordSet recordSet;
             if (delegatedColumns.isEmpty()) {
                 // Pick a random column, so that we can figure out how many rows there are
                 TpchSplit tpchSplit = (TpchSplit) split;
-                ColumnHandle column = Iterables.getFirst(metadata.getColumnHandles(tpchSplit.getTableHandle()).values(), null);
+                ConnectorColumnHandle column = Iterables.getFirst(metadata.getColumnHandles(tpchSplit.getTableHandle()).values(), null);
                 checkNotNull(column, "Could not find any columns");
                 recordSet = new EmptyRecordSet(super.getRecordSet(split, ImmutableList.of(column)));
             }
@@ -82,7 +84,7 @@ public class SampledTpchRecordSetProvider
         }
 
         @Override
-        public List<ColumnType> getColumnTypes()
+        public List<Type> getColumnTypes()
         {
             return ImmutableList.of();
         }
@@ -123,7 +125,7 @@ public class SampledTpchRecordSetProvider
         }
 
         @Override
-        public ColumnType getType(int field)
+        public Type getType(int field)
         {
             throw new RuntimeException("record cursor is empty");
         }
@@ -153,7 +155,7 @@ public class SampledTpchRecordSetProvider
         }
 
         @Override
-        public byte[] getString(int field)
+        public Slice getSlice(int field)
         {
             throw new RuntimeException("record cursor is empty");
         }
@@ -185,11 +187,11 @@ public class SampledTpchRecordSetProvider
         }
 
         @Override
-        public List<ColumnType> getColumnTypes()
+        public List<Type> getColumnTypes()
         {
-            List<ColumnType> types = new ArrayList<>();
+            List<Type> types = new ArrayList<>();
             types.addAll(delegate.getColumnTypes());
-            types.add(sampleWeightField, ColumnType.LONG);
+            types.add(sampleWeightField, BIGINT);
             return ImmutableList.copyOf(types);
         }
 
@@ -249,9 +251,9 @@ public class SampledTpchRecordSetProvider
         }
 
         @Override
-        public byte[] getString(int field)
+        public Slice getSlice(int field)
         {
-            return delegate.getString(field);
+            return delegate.getSlice(field);
         }
 
         @Override
@@ -273,10 +275,10 @@ public class SampledTpchRecordSetProvider
         }
 
         @Override
-        public ColumnType getType(int field)
+        public Type getType(int field)
         {
             if (field == sampleWeightField) {
-                return ColumnType.LONG;
+                return BIGINT;
             }
             else {
                 return delegate.getType(field);

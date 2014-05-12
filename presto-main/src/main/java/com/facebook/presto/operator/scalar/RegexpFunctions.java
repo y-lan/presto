@@ -18,10 +18,13 @@ import com.facebook.presto.byteCode.instruction.Constant;
 import com.facebook.presto.operator.Description;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.StandardErrorCode;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.spi.type.BooleanType;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.gen.DefaultFunctionBinder;
 import com.facebook.presto.sql.gen.FunctionBinder;
 import com.facebook.presto.sql.gen.FunctionBinding;
-import com.facebook.presto.sql.gen.TypedByteCodeNode;
+import com.facebook.presto.type.SqlType;
 import com.facebook.presto.util.ThreadLocalCache;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -54,12 +57,13 @@ public final class RegexpFunctions
 
     @Description("returns substrings matching a regular expression")
     @ScalarFunction(functionBinder = RegexFunctionBinder.class)
-    public static boolean regexpLike(Slice source, Slice pattern)
+    @SqlType(BooleanType.class)
+    public static boolean regexpLike(@SqlType(VarcharType.class) Slice source, @SqlType(VarcharType.class) Slice pattern)
     {
         return regexpLike(CACHE, source, pattern);
     }
 
-    public static boolean regexpLike(PatternCache patternCache, Slice source, Slice pattern)
+    public static boolean regexpLike(PatternCache patternCache, @SqlType(VarcharType.class) Slice source, @SqlType(VarcharType.class) Slice pattern)
     {
         return regexpLike(source, patternCache.get(pattern));
     }
@@ -71,14 +75,16 @@ public final class RegexpFunctions
 
     @Description("removes substrings matching a regular expression")
     @ScalarFunction(functionBinder = RegexFunctionBinder.class)
-    public static Slice regexpReplace(Slice source, Slice pattern)
+    @SqlType(VarcharType.class)
+    public static Slice regexpReplace(@SqlType(VarcharType.class) Slice source, @SqlType(VarcharType.class) Slice pattern)
     {
         return regexpReplace(source, pattern, Slices.EMPTY_SLICE);
     }
 
     @Description("replaces substrings matching a regular expression by given string")
     @ScalarFunction(functionBinder = RegexFunctionBinder.class)
-    public static Slice regexpReplace(Slice source, Slice pattern, Slice replacement)
+    @SqlType(VarcharType.class)
+    public static Slice regexpReplace(@SqlType(VarcharType.class) Slice source, @SqlType(VarcharType.class) Slice pattern, @SqlType(VarcharType.class) Slice replacement)
     {
         return regexpReplace(CACHE, source, pattern, replacement);
     }
@@ -98,7 +104,8 @@ public final class RegexpFunctions
     @Nullable
     @Description("string extracted using the given pattern")
     @ScalarFunction(functionBinder = RegexFunctionBinder.class)
-    public static Slice regexpExtract(Slice source, Slice pattern)
+    @SqlType(VarcharType.class)
+    public static Slice regexpExtract(@SqlType(VarcharType.class) Slice source, @SqlType(VarcharType.class) Slice pattern)
     {
         return regexpExtract(source, pattern, 0);
     }
@@ -106,7 +113,8 @@ public final class RegexpFunctions
     @Nullable
     @Description("returns regex group of extracted string with a pattern")
     @ScalarFunction(functionBinder = RegexFunctionBinder.class)
-    public static Slice regexpExtract(Slice source, Slice pattern, long group)
+    @SqlType(VarcharType.class)
+    public static Slice regexpExtract(@SqlType(VarcharType.class) Slice source, @SqlType(VarcharType.class) Slice pattern, @SqlType(BigintType.class) long group)
     {
         return regexpExtract(CACHE, source, pattern, group);
     }
@@ -155,12 +163,12 @@ public final class RegexpFunctions
             }
         }
 
-        public FunctionBinding bindFunction(long bindingId, String name, ByteCodeNode getSessionByteCode, List<TypedByteCodeNode> arguments)
+        public FunctionBinding bindFunction(long bindingId, String name, ByteCodeNode getSessionByteCode, List<ByteCodeNode> arguments)
         {
             MethodHandle methodHandle;
             boolean nullable = false;
-            TypedByteCodeNode patternNode = arguments.get(1);
-            if (patternNode.getNode() instanceof Constant) {
+            ByteCodeNode patternNode = arguments.get(1);
+            if (patternNode instanceof Constant) {
                 switch (name) {
                     case "regexp_like":
                         methodHandle = constantRegexpLike;
@@ -182,7 +190,7 @@ public final class RegexpFunctions
                         throw new IllegalArgumentException("Unsupported method " + name);
                 }
 
-                Slice patternSlice = (Slice) ((Constant) patternNode.getNode()).getValue();
+                Slice patternSlice = (Slice) ((Constant) patternNode).getValue();
 
                 Pattern pattern = Pattern.compile(patternSlice.toString(UTF_8));
 

@@ -18,6 +18,7 @@ import com.facebook.presto.ScheduledSplit;
 import com.facebook.presto.TaskSource;
 import com.facebook.presto.client.PrestoHeaders;
 import com.facebook.presto.execution.BufferInfo;
+import com.facebook.presto.execution.ExecutionFailureInfo;
 import com.facebook.presto.execution.RemoteTask;
 import com.facebook.presto.execution.SharedBuffer.QueueState;
 import com.facebook.presto.execution.SharedBufferInfo;
@@ -26,15 +27,14 @@ import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.execution.TaskState;
+import com.facebook.presto.metadata.Split;
 import com.facebook.presto.operator.TaskContext;
 import com.facebook.presto.operator.TaskStats;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
-import com.facebook.presto.spi.Split;
-import com.facebook.presto.sql.analyzer.Session;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
-import com.facebook.presto.tuple.TupleInfo;
-import com.facebook.presto.execution.ExecutionFailureInfo;
 import com.facebook.presto.util.SetThreadName;
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
@@ -81,6 +81,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.facebook.presto.spi.StandardErrorCode.REMOTE_TASK_ERROR;
 import static com.facebook.presto.spi.StandardErrorCode.TOO_MANY_REQUESTS_FAILED;
 import static com.facebook.presto.util.Failures.toFailure;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -102,7 +103,7 @@ public class HttpRemoteTask
 
     private final TaskId taskId;
 
-    private final Session session;
+    private final ConnectorSession session;
     private final String nodeId;
     private final PlanFragment planFragment;
     private final int maxConsecutiveErrorCount;
@@ -131,7 +132,7 @@ public class HttpRemoteTask
     private final Executor executor;
     private final JsonCodec<TaskInfo> taskInfoCodec;
     private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
-    private final List<TupleInfo> tupleInfos;
+    private final List<Type> types;
 
     private final RateLimiter errorRequestRateLimiter = RateLimiter.create(0.1);
 
@@ -141,7 +142,7 @@ public class HttpRemoteTask
 
     private final AtomicBoolean needsUpdate = new AtomicBoolean(true);
 
-    public HttpRemoteTask(Session session,
+    public HttpRemoteTask(ConnectorSession session,
             TaskId taskId,
             String nodeId,
             URI location,
@@ -176,7 +177,7 @@ public class HttpRemoteTask
             this.executor = executor;
             this.taskInfoCodec = taskInfoCodec;
             this.taskUpdateRequestCodec = taskUpdateRequestCodec;
-            this.tupleInfos = planFragment.getTupleInfos();
+            this.types = planFragment.getTypes();
             this.maxConsecutiveErrorCount = maxConsecutiveErrorCount;
             this.minErrorDuration = minErrorDuration;
 
@@ -231,7 +232,7 @@ public class HttpRemoteTask
     }
 
     @Override
-    public synchronized void addSplits(PlanNodeId sourceId, Iterable<? extends Split> splits)
+    public synchronized void addSplits(PlanNodeId sourceId, Iterable<Split> splits)
     {
         try (SetThreadName setThreadName = new SetThreadName("HttpRemoteTask-%s", taskId)) {
             checkNotNull(sourceId, "sourceId is null");
@@ -734,10 +735,10 @@ public class HttpRemoteTask
                     Exception cause = response.getException();
                     if (cause == null) {
                         if (response.getStatusCode() == HttpStatus.OK.code()) {
-                            cause = new RuntimeException(format("Expected response from %s is empty", uri));
+                            cause = new PrestoException(REMOTE_TASK_ERROR.toErrorCode(), format("Expected response from %s is empty", uri));
                         }
                         else {
-                            cause = new RuntimeException(format("Expected response code from %s to be %s, but was %s: %s",
+                            cause = new PrestoException(REMOTE_TASK_ERROR.toErrorCode(), format("Expected response code from %s to be %s, but was %s: %s",
                                     uri,
                                     HttpStatus.OK.code(),
                                     response.getStatusCode(),

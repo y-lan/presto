@@ -28,7 +28,7 @@ import java.util.concurrent.ExecutorService;
 import static com.facebook.presto.benchmark.BenchmarkQueryRunner.createLocalQueryRunner;
 import static com.facebook.presto.operator.AggregationFunctionDefinition.aggregation;
 import static com.facebook.presto.operator.aggregation.DoubleSumAggregation.DOUBLE_SUM;
-import static com.facebook.presto.util.Threads.daemonThreadsNamed;
+import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 
 public class HashAggregationBenchmark
@@ -44,7 +44,7 @@ public class HashAggregationBenchmark
     {
         OperatorFactory tableScanOperator = createTableScanOperator(0, "orders", "orderstatus", "totalprice");
         HashAggregationOperatorFactory aggregationOperator = new HashAggregationOperatorFactory(1,
-                ImmutableList.of(tableScanOperator.getTupleInfos().get(0)),
+                ImmutableList.of(tableScanOperator.getTypes().get(0)),
                 Ints.asList(0),
                 Step.SINGLE,
                 ImmutableList.of(aggregation(DOUBLE_SUM, ImmutableList.of(new Input(1)), Optional.<Input>absent(), Optional.<Input>absent(), 1.0)),

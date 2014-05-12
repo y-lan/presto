@@ -15,14 +15,16 @@ package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.metadata.FunctionInfo;
 import com.facebook.presto.metadata.Metadata;
+import com.facebook.presto.metadata.OutputTableHandle;
 import com.facebook.presto.metadata.Signature;
-import com.facebook.presto.spi.OutputTableHandle;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.sql.planner.PlanFragment.OutputPartitioning;
 import com.facebook.presto.sql.planner.PlanFragment.PlanDistribution;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.DistinctLimitNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
+import com.facebook.presto.sql.planner.plan.IndexJoinNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
 import com.facebook.presto.sql.planner.plan.LimitNode;
 import com.facebook.presto.sql.planner.plan.MarkDistinctNode;
@@ -68,13 +70,15 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class DistributedLogicalPlanner
 {
+    private final ConnectorSession session;
     private final Metadata metadata;
     private final PlanNodeIdAllocator idAllocator;
 
-    public DistributedLogicalPlanner(Metadata metadata, PlanNodeIdAllocator idAllocator)
+    public DistributedLogicalPlanner(ConnectorSession session, Metadata metadata, PlanNodeIdAllocator idAllocator)
     {
-        this.metadata = metadata;
-        this.idAllocator = idAllocator;
+        this.session = checkNotNull(session, "session is null");
+        this.metadata = checkNotNull(metadata, "metadata is null");
+        this.idAllocator = checkNotNull(idAllocator, "idAllocator is null");
     }
 
     public SubPlan createSubPlans(Plan plan, boolean createSingleNodePlan)
@@ -120,7 +124,7 @@ public class DistributedLogicalPlanner
 
             boolean decomposable = true;
             for (Signature function : functions.values()) {
-                if (!metadata.getFunction(function).getAggregationFunction().isDecomposable()) {
+                if (!metadata.getExactFunction(function).getAggregationFunction().isDecomposable()) {
                     decomposable = false;
                     break;
                 }
@@ -185,7 +189,7 @@ public class DistributedLogicalPlanner
             Map<Symbol, Symbol> intermediateMask = new HashMap<>();
             for (Map.Entry<Symbol, FunctionCall> entry : aggregations.entrySet()) {
                 Signature signature = functions.get(entry.getKey());
-                FunctionInfo function = metadata.getFunction(signature);
+                FunctionInfo function = metadata.getExactFunction(signature);
 
                 Symbol intermediateSymbol = allocator.newSymbol(function.getName().getSuffix(), function.getIntermediateType());
                 intermediateCalls.put(intermediateSymbol, entry.getValue());
@@ -388,7 +392,7 @@ public class DistributedLogicalPlanner
             // TODO: create table in pre-execution step, not here
             // Part of the plan should be an Optional<StateChangeListener<QueryState>> and this
             // callback can create the table and abort the table creation if the query fails.
-            OutputTableHandle target = metadata.beginCreateTable(node.getCatalog(), node.getTableMetadata());
+            OutputTableHandle target = metadata.beginCreateTable(session, node.getCatalog(), node.getTableMetadata());
 
             SubPlanBuilder current = node.getSource().accept(this, context);
             current.setRoot(new TableWriterNode(node.getId(), current.getRoot(), target, node.getColumns(), node.getColumnNames(), node.getOutputSymbols(), node.getSampleWeightSymbol()));
@@ -479,6 +483,14 @@ public class DistributedLogicalPlanner
                 return createSingleNodePlan(semiJoinNode)
                         .setChildren(Iterables.concat(source.getChildren(), filteringSource.getChildren()));
             }
+        }
+
+        @Override
+        public SubPlanBuilder visitIndexJoin(IndexJoinNode node, Void context)
+        {
+            SubPlanBuilder current = node.getProbeSource().accept(this, context);
+            current.setRoot(new IndexJoinNode(node.getId(), node.getType(), current.getRoot(), node.getIndexSource(), node.getCriteria()));
+            return current;
         }
 
         @Override

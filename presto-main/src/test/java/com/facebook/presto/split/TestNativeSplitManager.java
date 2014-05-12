@@ -13,32 +13,36 @@
  */
 package com.facebook.presto.split;
 
+import com.facebook.presto.metadata.ColumnMetadataMapper;
 import com.facebook.presto.metadata.DatabaseShardManager;
 import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.MetadataUtil.TableMetadataBuilder;
 import com.facebook.presto.metadata.NativeConnectorId;
 import com.facebook.presto.metadata.NativeMetadata;
-import com.facebook.presto.metadata.PrestoNode;
 import com.facebook.presto.metadata.NodeVersion;
+import com.facebook.presto.metadata.PrestoNode;
 import com.facebook.presto.metadata.ShardManager;
-import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.metadata.TableColumnMapper;
+import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.spi.ConnectorPartition;
+import com.facebook.presto.spi.ConnectorPartitionResult;
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.ConnectorSplitSource;
+import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.Domain;
-import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.PartitionKey;
-import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Range;
 import com.facebook.presto.spi.SortedRangeSet;
-import com.facebook.presto.spi.SplitSource;
-import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.type.TypeRegistry;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Files;
 import io.airlift.testing.FileUtils;
 import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.Handle;
-import org.skife.jdbi.v2.IDBI;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -46,33 +50,40 @@ import org.testng.annotations.Test;
 import java.io.File;
 import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
-import static com.facebook.presto.spi.ColumnType.LONG;
-import static com.facebook.presto.spi.ColumnType.STRING;
+import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static io.airlift.slice.Slices.utf8Slice;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 @Test(singleThreaded = true)
 public class TestNativeSplitManager
 {
+    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "default", "default", UTC_KEY, Locale.ENGLISH, null, null);
     private static final ConnectorTableMetadata TEST_TABLE = TableMetadataBuilder.tableMetadataBuilder("demo", "test_table")
-            .partitionKeyColumn("ds", STRING)
-            .column("foo", STRING)
-            .column("bar", LONG)
+            .partitionKeyColumn("ds", VARCHAR)
+            .column("foo", VARCHAR)
+            .column("bar", BigintType.BIGINT)
             .build();
 
     private Handle dummyHandle;
     private File dataDir;
     private NativeSplitManager nativeSplitManager;
-    private TableHandle tableHandle;
-    private ColumnHandle dsColumnHandle;
+    private ConnectorTableHandle tableHandle;
+    private ConnectorColumnHandle dsColumnHandle;
 
     @BeforeMethod
     public void setup()
             throws Exception
     {
-        IDBI dbi = new DBI("jdbc:h2:mem:test" + System.nanoTime());
+        TypeRegistry typeRegistry = new TypeRegistry();
+        DBI dbi = new DBI("jdbc:h2:mem:test" + System.nanoTime());
+        dbi.registerMapper(new TableColumnMapper(typeRegistry));
+        dbi.registerMapper(new ColumnMetadataMapper(typeRegistry));
+        dbi.registerMapper(new NativePartitionKey.Mapper(typeRegistry));
         dummyHandle = dbi.open();
         dataDir = Files.createTempDir();
         ShardManager shardManager = new DatabaseShardManager(dbi);
@@ -83,7 +94,7 @@ public class TestNativeSplitManager
 
         NativeMetadata metadata = new NativeMetadata(new NativeConnectorId("native"), dbi, shardManager);
 
-        tableHandle = metadata.createTable(TEST_TABLE);
+        tableHandle = metadata.createTable(SESSION, TEST_TABLE);
         dsColumnHandle = metadata.getColumnHandle(tableHandle, "ds");
 
         UUID shardUuid1 = UUID.randomUUID();
@@ -94,7 +105,7 @@ public class TestNativeSplitManager
         shardManager.commitPartition(
                 tableHandle,
                 "ds=1",
-                ImmutableList.<PartitionKey>of(new NativePartitionKey("ds=1", "ds", STRING, "1")),
+                ImmutableList.<PartitionKey>of(new NativePartitionKey("ds=1", "ds", VARCHAR, "1")),
                 ImmutableMap.<UUID, String>builder()
                         .put(shardUuid1, nodeName)
                         .put(shardUuid2, nodeName)
@@ -104,7 +115,7 @@ public class TestNativeSplitManager
         shardManager.commitPartition(
                 tableHandle,
                 "ds=2",
-                ImmutableList.<PartitionKey>of(new NativePartitionKey("ds=2", "ds", STRING, "2")),
+                ImmutableList.<PartitionKey>of(new NativePartitionKey("ds=2", "ds", VARCHAR, "2")),
                 ImmutableMap.<UUID, String>builder()
                         .put(shardUuid4, nodeName)
                         .build());
@@ -123,15 +134,15 @@ public class TestNativeSplitManager
     public void testSanity()
             throws InterruptedException
     {
-        PartitionResult partitionResult = nativeSplitManager.getPartitions(tableHandle, TupleDomain.all());
+        ConnectorPartitionResult partitionResult = nativeSplitManager.getPartitions(tableHandle, TupleDomain.<ConnectorColumnHandle>all());
         assertEquals(partitionResult.getPartitions().size(), 2);
         assertTrue(partitionResult.getUndeterminedTupleDomain().isAll());
 
-        List<Partition> partitions = partitionResult.getPartitions();
-        TupleDomain columnUnionedTupleDomain = TupleDomain.columnWiseUnion(partitions.get(0).getTupleDomain(), partitions.get(1).getTupleDomain());
-        assertEquals(columnUnionedTupleDomain, TupleDomain.withColumnDomains(ImmutableMap.of(dsColumnHandle, Domain.create(SortedRangeSet.of(Range.equal("1"), Range.equal("2")), false))));
+        List<ConnectorPartition> partitions = partitionResult.getPartitions();
+        TupleDomain<ConnectorColumnHandle> columnUnionedTupleDomain = TupleDomain.columnWiseUnion(partitions.get(0).getTupleDomain(), partitions.get(1).getTupleDomain());
+        assertEquals(columnUnionedTupleDomain, TupleDomain.withColumnDomains(ImmutableMap.of(dsColumnHandle, Domain.create(SortedRangeSet.of(Range.equal(utf8Slice("1")), Range.equal(utf8Slice("2"))), false))));
 
-        SplitSource splitSource = nativeSplitManager.getPartitionSplits(tableHandle, partitions);
+        ConnectorSplitSource splitSource = nativeSplitManager.getPartitionSplits(tableHandle, partitions);
         int splitCount = 0;
         while (!splitSource.isFinished()) {
             splitCount += splitSource.getNextBatch(1000).size();

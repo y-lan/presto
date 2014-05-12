@@ -13,13 +13,18 @@
  */
 package com.facebook.presto.server;
 
+import com.facebook.presto.block.BlockEncodingManager;
 import com.facebook.presto.connector.ConnectorManager;
 import com.facebook.presto.connector.system.SystemTablesManager;
 import com.facebook.presto.metadata.FunctionFactory;
 import com.facebook.presto.metadata.MetadataManager;
+import com.facebook.presto.metadata.OperatorFactory;
 import com.facebook.presto.spi.ConnectorFactory;
 import com.facebook.presto.spi.Plugin;
 import com.facebook.presto.spi.SystemTable;
+import com.facebook.presto.spi.block.BlockEncodingFactory;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.type.TypeRegistry;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -55,12 +60,24 @@ import static com.google.common.base.Preconditions.checkNotNull;
 @ThreadSafe
 public class PluginManager
 {
+    private static final List<String> HIDDEN_CLASSES = ImmutableList.<String>builder()
+            .add("org.slf4j")
+            .build();
+
+    private static final ImmutableList<String> PARENT_FIRST_CLASSES = ImmutableList.<String>builder()
+            .add("com.facebook.presto")
+            .add("com.fasterxml.jackson")
+            .add("io.airlift.slice")
+            .build();
+
     private static final Logger log = Logger.get(PluginManager.class);
 
     private final Injector injector;
     private final ConnectorManager connectorManager;
     private final SystemTablesManager systemTablesManager;
     private final MetadataManager metadataManager;
+    private final BlockEncodingManager blockEncodingManager;
+    private final TypeRegistry typeRegistry;
     private final ArtifactResolver resolver;
     private final File installedPluginsDir;
     private final List<String> plugins;
@@ -75,7 +92,9 @@ public class PluginManager
             ConnectorManager connectorManager,
             ConfigurationFactory configurationFactory,
             SystemTablesManager systemTablesManager,
-            MetadataManager metadataManager)
+            MetadataManager metadataManager,
+            BlockEncodingManager blockEncodingManager,
+            TypeRegistry typeRegistry)
     {
         checkNotNull(injector, "injector is null");
         checkNotNull(nodeInfo, "nodeInfo is null");
@@ -102,6 +121,8 @@ public class PluginManager
         this.connectorManager = checkNotNull(connectorManager, "connectorManager is null");
         this.systemTablesManager = checkNotNull(systemTablesManager, "systemTablesManager is null");
         this.metadataManager = checkNotNull(metadataManager, "metadataManager is null");
+        this.blockEncodingManager = checkNotNull(blockEncodingManager, "blockEncodingManager is null");
+        this.typeRegistry = checkNotNull(typeRegistry, "typeRegistry is null");
     }
 
     public boolean arePluginsLoaded()
@@ -156,6 +177,14 @@ public class PluginManager
 
         plugin.setOptionalConfig(optionalConfig);
 
+        for (BlockEncodingFactory<?> blockEncodingFactory : plugin.getServices(BlockEncodingFactory.class)) {
+            blockEncodingManager.addBlockEncodingFactory(blockEncodingFactory);
+        }
+
+        for (Type type : plugin.getServices(Type.class)) {
+            typeRegistry.addType(type);
+        }
+
         for (ConnectorFactory connectorFactory : plugin.getServices(ConnectorFactory.class)) {
             connectorManager.addConnectorFactory(connectorFactory);
         }
@@ -167,6 +196,10 @@ public class PluginManager
         for (FunctionFactory functionFactory : plugin.getServices(FunctionFactory.class)) {
             metadataManager.addFunctions(functionFactory.listFunctions());
         }
+
+        for (OperatorFactory operatorFactory : plugin.getServices(OperatorFactory.class)) {
+            metadataManager.addOperators(operatorFactory.listOperators());
+        }
     }
 
     private URLClassLoader buildClassLoader(String plugin)
@@ -176,12 +209,10 @@ public class PluginManager
         if (file.isFile() && (file.getName().equals("pom.xml") || file.getName().endsWith(".pom"))) {
             return buildClassLoaderFromPom(file);
         }
-        else if (file.isDirectory()) {
+        if (file.isDirectory()) {
             return buildClassLoaderFromDirectory(file);
         }
-        else {
-            return buildClassLoaderFromCoordinates(plugin);
-        }
+        return buildClassLoaderFromCoordinates(plugin);
     }
 
     private URLClassLoader buildClassLoaderFromPom(File pomFile)
@@ -239,13 +270,11 @@ public class PluginManager
 
     private URLClassLoader createClassLoader(List<URL> urls)
     {
-        return new SimpleChildFirstClassLoader(urls,
-                getClass().getClassLoader(),
-                ImmutableList.of("org.slf4j"),
-                ImmutableList.of("com.facebook.presto", "com.fasterxml.jackson"));
+        ClassLoader parent = getClass().getClassLoader();
+        return new SimpleChildFirstClassLoader(urls, parent, HIDDEN_CLASSES, PARENT_FIRST_CLASSES);
     }
 
-    private List<File> listFiles(File installedPluginsDir)
+    private static List<File> listFiles(File installedPluginsDir)
     {
         if (installedPluginsDir != null && installedPluginsDir.isDirectory()) {
             File[] files = installedPluginsDir.listFiles();

@@ -5,12 +5,12 @@
     <parent>
         <groupId>com.facebook.presto</groupId>
         <artifactId>presto-root</artifactId>
-        <version>0.66-SNAPSHOT</version>
+        <version>0.69-SNAPSHOT</version>
     </parent>
 
     <artifactId>presto-hive-cdh4</artifactId>
     <name>presto-hive-cdh4</name>
-    <description>Presto - Hive Connector - CDH4</description>
+    <description>Presto - Hive Connector - CDH 4</description>
 
     <properties>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>

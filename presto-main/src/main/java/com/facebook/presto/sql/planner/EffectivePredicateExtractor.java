@@ -13,7 +13,7 @@
  */
 package com.facebook.presto.sql.planner;
 
-import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.metadata.ColumnHandle;
 import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.SortedRangeSet;
 import com.facebook.presto.spi.TupleDomain;
@@ -36,6 +36,7 @@ import com.facebook.presto.sql.tree.ComparisonExpression;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.ExpressionTreeRewriter;
 import com.facebook.presto.sql.tree.QualifiedNameReference;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableBiMap;
@@ -68,9 +69,16 @@ import static com.google.common.collect.Iterables.transform;
 public class EffectivePredicateExtractor
         extends PlanVisitor<Void, Expression>
 {
-    public static Expression extract(PlanNode node)
+    public static Expression extract(PlanNode node, Map<Symbol, Type> symbolTypes)
     {
-        return node.accept(new EffectivePredicateExtractor(), null);
+        return node.accept(new EffectivePredicateExtractor(symbolTypes), null);
+    }
+
+    private final Map<Symbol, Type> symbolTypes;
+
+    public EffectivePredicateExtractor(Map<Symbol, Type> symbolTypes)
+    {
+        this.symbolTypes = symbolTypes;
     }
 
     @Override
@@ -168,7 +176,7 @@ public class EffectivePredicateExtractor
         // and the TupleDomain that was initially used to generate those Partitions. We do this because we need to select the more restrictive of the two.
         // Note: the TupleDomain used to generate the partitions may contain columns/predicates that are unknown to the partition TupleDomain summary,
         // but those are guaranteed to be part of a FilterNode directly above this table scan, so it's ok to include.
-        TupleDomain tupleDomain = node.getPartitionsDomainSummary().intersect(node.getGeneratedPartitions().get().getTupleDomainInput());
+        TupleDomain<ColumnHandle> tupleDomain = node.getPartitionsDomainSummary().intersect(node.getGeneratedPartitions().get().getTupleDomainInput());
 
         // A TupleDomain that has too many disjunctions will produce an Expression that will be very expensive to evaluate at runtime.
         // For the time being, we will just summarize the TupleDomain by the span over each of its columns (which is ok since we only need to generate
@@ -176,11 +184,11 @@ public class EffectivePredicateExtractor
         // In the future, we can do further optimizations here that will simplify the TupleDomain, but still improve the specificity compared to just a simple span (e.g. range clustering).
         tupleDomain = spanTupleDomain(tupleDomain);
 
-        Expression partitionPredicate = DomainTranslator.toPredicate(tupleDomain, ImmutableBiMap.copyOf(node.getAssignments()).inverse());
+        Expression partitionPredicate = DomainTranslator.toPredicate(tupleDomain, ImmutableBiMap.copyOf(node.getAssignments()).inverse(), symbolTypes);
         return pullExpressionThroughSymbols(partitionPredicate, node.getOutputSymbols());
     }
 
-    private static TupleDomain spanTupleDomain(TupleDomain tupleDomain)
+    private static TupleDomain<ColumnHandle> spanTupleDomain(TupleDomain<ColumnHandle> tupleDomain)
     {
         if (tupleDomain.isNone()) {
             return tupleDomain;

@@ -13,8 +13,9 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
-import com.facebook.presto.spi.Split;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
@@ -28,7 +29,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class HiveSplit
-        implements Split
+        implements ConnectorSplit
 {
     private final String clientId;
     private final String path;
@@ -40,6 +41,7 @@ public class HiveSplit
     private final String database;
     private final String table;
     private final String partitionName;
+    private final ConnectorSession session;
 
     @JsonCreator
     public HiveSplit(
@@ -52,8 +54,10 @@ public class HiveSplit
             @JsonProperty("length") long length,
             @JsonProperty("schema") Properties schema,
             @JsonProperty("partitionKeys") List<HivePartitionKey> partitionKeys,
-            @JsonProperty("addresses") List<HostAddress> addresses)
+            @JsonProperty("addresses") List<HostAddress> addresses,
+            @JsonProperty("session") ConnectorSession session)
     {
+        this.session = session;
         checkNotNull(clientId, "clientId is null");
         checkArgument(start >= 0, "start must be positive");
         checkArgument(length >= 0, "length must be positive");
@@ -136,6 +140,12 @@ public class HiveSplit
     public List<HostAddress> getAddresses()
     {
         return addresses;
+    }
+
+    @JsonProperty
+    public ConnectorSession getSession()
+    {
+        return session;
     }
 
     @Override

@@ -13,15 +13,14 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.block.Block;
-import com.facebook.presto.block.BlockBuilder;
-import com.facebook.presto.block.BlockCursor;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
 import com.facebook.presto.util.array.ByteBigArray;
 import com.google.common.base.Optional;
 
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_BOOLEAN;
-import static com.facebook.presto.tuple.TupleInfo.Type.BOOLEAN;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -32,7 +31,7 @@ public class BooleanMinAggregation
 
     public BooleanMinAggregation()
     {
-        super(SINGLE_BOOLEAN, SINGLE_BOOLEAN, BOOLEAN);
+        super(BOOLEAN, BOOLEAN, BOOLEAN);
     }
 
     @Override
@@ -56,7 +55,7 @@ public class BooleanMinAggregation
         public BooleanMinGroupedAccumulator(int valueChannel)
         {
             // Min/max are not effected by distinct, so ignore it.
-            super(valueChannel, SINGLE_BOOLEAN, SINGLE_BOOLEAN, Optional.<Integer>absent(), Optional.<Integer>absent());
+            super(valueChannel, BOOLEAN, BOOLEAN, Optional.<Integer>absent(), Optional.<Integer>absent());
             this.minValues = new ByteBigArray();
         }
 
@@ -103,7 +102,7 @@ public class BooleanMinAggregation
                 output.appendNull();
             }
             else {
-                output.append(value == TRUE_VALUE);
+                output.appendBoolean(value == TRUE_VALUE);
             }
         }
     }
@@ -125,7 +124,7 @@ public class BooleanMinAggregation
         public BooleanMinAccumulator(int valueChannel)
         {
             // Min/max are not effected by distinct, so ignore it.
-            super(valueChannel, SINGLE_BOOLEAN, SINGLE_BOOLEAN, Optional.<Integer>absent(), Optional.<Integer>absent());
+            super(valueChannel, BOOLEAN, BOOLEAN, Optional.<Integer>absent(), Optional.<Integer>absent());
         }
 
         @Override
@@ -150,7 +149,7 @@ public class BooleanMinAggregation
         public void evaluateFinal(BlockBuilder out)
         {
             if (notNull) {
-                out.append(min);
+                out.appendBoolean(min);
             }
             else {
                 out.appendNull();

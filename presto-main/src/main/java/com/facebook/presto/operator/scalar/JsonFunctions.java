@@ -17,10 +17,14 @@ import com.facebook.presto.byteCode.ByteCodeNode;
 import com.facebook.presto.byteCode.instruction.Constant;
 import com.facebook.presto.operator.scalar.JsonExtract.JsonExtractCache;
 import com.facebook.presto.operator.scalar.JsonExtract.JsonExtractor;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.spi.type.BooleanType;
+import com.facebook.presto.spi.type.DoubleType;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.gen.DefaultFunctionBinder;
 import com.facebook.presto.sql.gen.FunctionBinder;
 import com.facebook.presto.sql.gen.FunctionBinding;
-import com.facebook.presto.sql.gen.TypedByteCodeNode;
+import com.facebook.presto.type.SqlType;
 import com.facebook.presto.util.ThreadLocalCache;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
@@ -30,7 +34,6 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.primitives.Doubles;
 import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 
 import javax.annotation.Nullable;
 
@@ -51,6 +54,7 @@ import static com.fasterxml.jackson.core.JsonToken.VALUE_NUMBER_FLOAT;
 import static com.fasterxml.jackson.core.JsonToken.VALUE_NUMBER_INT;
 import static com.fasterxml.jackson.core.JsonToken.VALUE_STRING;
 import static com.fasterxml.jackson.core.JsonToken.VALUE_TRUE;
+import static io.airlift.slice.Slices.utf8Slice;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.lang.invoke.MethodType.methodType;
 
@@ -66,7 +70,8 @@ public final class JsonFunctions
 
     @Nullable
     @ScalarFunction
-    public static Long jsonArrayLength(Slice json)
+    @SqlType(BigintType.class)
+    public static Long jsonArrayLength(@SqlType(VarcharType.class) Slice json)
     {
         try (JsonParser parser = JSON_FACTORY.createJsonParser(json.getInput())) {
             if (parser.nextToken() != START_ARRAY) {
@@ -94,7 +99,8 @@ public final class JsonFunctions
 
     @Nullable
     @ScalarFunction
-    public static Boolean jsonArrayContains(Slice json, boolean value)
+    @SqlType(BooleanType.class)
+    public static Boolean jsonArrayContains(@SqlType(VarcharType.class) Slice json, @SqlType(BooleanType.class) boolean value)
     {
         try (JsonParser parser = JSON_FACTORY.createJsonParser(json.getInput())) {
             if (parser.nextToken() != START_ARRAY) {
@@ -124,7 +130,8 @@ public final class JsonFunctions
 
     @Nullable
     @ScalarFunction
-    public static Boolean jsonArrayContains(Slice json, long value)
+    @SqlType(BooleanType.class)
+    public static Boolean jsonArrayContains(@SqlType(VarcharType.class) Slice json, @SqlType(BigintType.class) long value)
     {
         try (JsonParser parser = JSON_FACTORY.createJsonParser(json.getInput())) {
             if (parser.nextToken() != START_ARRAY) {
@@ -155,7 +162,8 @@ public final class JsonFunctions
 
     @Nullable
     @ScalarFunction
-    public static Boolean jsonArrayContains(Slice json, double value)
+    @SqlType(BooleanType.class)
+    public static Boolean jsonArrayContains(@SqlType(VarcharType.class) Slice json, @SqlType(DoubleType.class) double value)
     {
         if (!Doubles.isFinite(value)) {
             return false;
@@ -190,7 +198,8 @@ public final class JsonFunctions
 
     @Nullable
     @ScalarFunction
-    public static Boolean jsonArrayContains(Slice json, Slice value)
+    @SqlType(BooleanType.class)
+    public static Boolean jsonArrayContains(@SqlType(VarcharType.class) Slice json, @SqlType(VarcharType.class) Slice value)
     {
         String valueString = value.toString(Charsets.UTF_8);
 
@@ -221,7 +230,8 @@ public final class JsonFunctions
 
     @Nullable
     @ScalarFunction
-    public static Slice jsonArrayGet(Slice json, long index)
+    @SqlType(VarcharType.class)
+    public static Slice jsonArrayGet(@SqlType(VarcharType.class) Slice json, @SqlType(BigintType.class) long index)
     {
         try (JsonParser parser = JSON_FACTORY.createJsonParser(json.getInput())) {
             if (parser.nextToken() != START_ARRAY) {
@@ -241,7 +251,7 @@ public final class JsonFunctions
                 }
                 if (token == END_ARRAY) {
                     if (tokens != null && count >= index * -1) {
-                        return Slices.utf8Slice(tokens.get(0));
+                        return utf8Slice(tokens.get(0));
                     }
 
                     return null;
@@ -252,7 +262,7 @@ public final class JsonFunctions
                     if (parser.getValueAsString() == null) {
                         return null;
                     }
-                    return Slices.utf8Slice(parser.getValueAsString());
+                    return utf8Slice(parser.getValueAsString());
                 }
 
                 if (tokens != null) {
@@ -272,7 +282,8 @@ public final class JsonFunctions
     }
 
     @ScalarFunction(value = JSON_EXTRACT_SCALAR_FUNCTION_NAME, functionBinder = JsonFunctionBinder.class)
-    public static Slice jsonExtractScalar(Slice json, Slice jsonPath)
+    @SqlType(VarcharType.class)
+    public static Slice jsonExtractScalar(@SqlType(VarcharType.class) Slice json, @SqlType(VarcharType.class) Slice jsonPath)
     {
         try {
             return JsonExtract.extractScalar(json, jsonPath);
@@ -283,7 +294,8 @@ public final class JsonFunctions
     }
 
     @ScalarFunction(value = JSON_EXTRACT_FUNCTION_NAME, functionBinder = JsonFunctionBinder.class)
-    public static Slice jsonExtract(Slice json, Slice jsonPath)
+    @SqlType(VarcharType.class)
+    public static Slice jsonExtract(@SqlType(VarcharType.class) Slice json, @SqlType(VarcharType.class) Slice jsonPath)
     {
         try {
             return JsonExtract.extractJson(json, jsonPath);
@@ -310,13 +322,13 @@ public final class JsonFunctions
         }
 
         @Override
-        public FunctionBinding bindFunction(long bindingId, String name, ByteCodeNode getSessionByteCode, List<TypedByteCodeNode> arguments)
+        public FunctionBinding bindFunction(long bindingId, String name, ByteCodeNode getSessionByteCode, List<ByteCodeNode> arguments)
         {
-            TypedByteCodeNode patternNode = arguments.get(1);
+            ByteCodeNode patternNode = arguments.get(1);
 
             MethodHandle methodHandle;
-            if (patternNode.getNode() instanceof Constant) {
-                Slice patternSlice = (Slice) ((Constant) patternNode.getNode()).getValue();
+            if (patternNode instanceof Constant) {
+                Slice patternSlice = (Slice) ((Constant) patternNode).getValue();
                 String pattern = patternSlice.toString(Charsets.UTF_8);
 
                 JsonExtractor jsonExtractor;

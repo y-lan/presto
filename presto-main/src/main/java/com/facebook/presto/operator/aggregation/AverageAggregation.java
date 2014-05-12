@@ -13,19 +13,20 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.block.Block;
-import com.facebook.presto.block.BlockBuilder;
-import com.facebook.presto.block.BlockCursor;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
-import com.facebook.presto.tuple.TupleInfo.Type;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.util.array.DoubleBigArray;
 import com.facebook.presto.util.array.LongBigArray;
 import com.google.common.base.Optional;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_DOUBLE;
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
@@ -38,16 +39,16 @@ public class AverageAggregation
 
     public AverageAggregation(Type parameterType)
     {
-        super(SINGLE_DOUBLE, SINGLE_VARBINARY, parameterType);
+        super(DOUBLE, VARCHAR, parameterType);
 
-        if (parameterType == Type.FIXED_INT_64) {
+        if (parameterType == BIGINT) {
             this.inputIsLong = true;
         }
-        else if (parameterType == Type.DOUBLE) {
+        else if (parameterType == DOUBLE) {
             this.inputIsLong = false;
         }
         else {
-            throw new IllegalArgumentException("Expected parameter type to be FIXED_INT_64 or DOUBLE, but was " + parameterType);
+            throw new IllegalArgumentException("Expected parameter type to be BIGINT or DOUBLE, but was " + parameterType);
         }
     }
 
@@ -68,7 +69,7 @@ public class AverageAggregation
 
         public AverageGroupedAccumulator(int valueChannel, boolean inputIsLong, Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel)
         {
-            super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY, maskChannel, sampleWeightChannel);
+            super(valueChannel, DOUBLE, VARCHAR, maskChannel, sampleWeightChannel);
             this.inputIsLong = inputIsLong;
             this.counts = new LongBigArray();
             this.sums = new DoubleBigArray();
@@ -153,7 +154,7 @@ public class AverageAggregation
             Slice value = Slices.allocate(SIZE_OF_LONG + SIZE_OF_DOUBLE);
             value.setLong(0, count);
             value.setDouble(SIZE_OF_LONG, sum);
-            output.append(value);
+            output.appendSlice(value);
         }
 
         @Override
@@ -162,7 +163,7 @@ public class AverageAggregation
             long count = counts.get((long) groupId);
             if (count != 0) {
                 double value = sums.get((long) groupId);
-                output.append(value / count);
+                output.appendDouble(value / count);
             }
             else {
                 output.appendNull();
@@ -187,7 +188,7 @@ public class AverageAggregation
 
         public AverageAccumulator(int valueChannel, boolean inputIsLong, Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel)
         {
-            super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY, maskChannel, sampleWeightChannel);
+            super(valueChannel, DOUBLE, VARCHAR, maskChannel, sampleWeightChannel);
             this.inputIsLong = inputIsLong;
         }
 
@@ -241,14 +242,14 @@ public class AverageAggregation
             Slice value = Slices.allocate(SIZE_OF_LONG + SIZE_OF_DOUBLE);
             value.setLong(0, count);
             value.setDouble(SIZE_OF_LONG, sum);
-            out.append(value);
+            out.appendSlice(value);
         }
 
         @Override
         public void evaluateFinal(BlockBuilder out)
         {
             if (count != 0) {
-                out.append(sum / count);
+                out.appendDouble(sum / count);
             }
             else {
                 out.appendNull();

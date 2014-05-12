@@ -14,7 +14,7 @@
 package com.facebook.presto.operator;
 
 import com.facebook.presto.execution.TaskId;
-import com.facebook.presto.sql.analyzer.Session;
+import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.base.Function;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.facebook.presto.operator.OperatorContext.operatorStatsGetter;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.Iterables.transform;
 import static io.airlift.units.DataSize.Unit.BYTE;
@@ -85,6 +86,11 @@ public class PipelineContext
         this.executor = checkNotNull(executor, "executor is null");
     }
 
+    public TaskContext getTaskContext()
+    {
+        return taskContext;
+    }
+
     public TaskId getTaskId()
     {
         return taskContext.getTaskId();
@@ -112,7 +118,7 @@ public class PipelineContext
         return ImmutableList.copyOf(drivers);
     }
 
-    public Session getSession()
+    public ConnectorSession getSession()
     {
         return taskContext.getSession();
     }
@@ -130,7 +136,7 @@ public class PipelineContext
         completedDrivers.getAndIncrement();
 
         // remove the memory reservation
-        memoryReservation.getAndAdd(-driverStats.getMemoryReservation().toBytes());
+        freeMemory(driverStats.getMemoryReservation().toBytes());
 
         queuedTime.add(driverStats.getQueuedTime().roundTo(NANOSECONDS));
         elapsedTime.add(driverStats.getElapsedTime().roundTo(NANOSECONDS));
@@ -144,14 +150,19 @@ public class PipelineContext
         // merge the operator stats into the operator summary
         List<OperatorStats> operators = driverStats.getOperatorStats();
         for (OperatorStats operator : operators) {
-            OperatorStats operatorSummary = operatorSummaries.get(operator.getOperatorId());
-            if (operatorSummary != null) {
-                operatorSummary = operatorSummary.add(operator);
+            // TODO: replace with ConcurrentMap.compute() when we migrate to java 8
+            OperatorStats updated;
+            OperatorStats current;
+            do {
+                current = operatorSummaries.get(operator.getOperatorId());
+                if (current != null) {
+                    updated = current.add(operator);
+                }
+                else {
+                    updated = operator;
+                }
             }
-            else {
-                operatorSummary = operator;
-            }
-            operatorSummaries.put(operator.getOperatorId(), operatorSummary);
+            while (!compareAndSet(operatorSummaries, operator.getOperatorId(), current, updated));
         }
 
         rawInputDataSize.update(driverStats.getRawInputDataSize().toBytes());
@@ -196,6 +207,13 @@ public class PipelineContext
             memoryReservation.getAndAdd(bytes);
         }
         return result;
+    }
+
+    private synchronized void freeMemory(long bytes)
+    {
+        checkArgument(bytes <= memoryReservation.get(), "tried to free more memory than is reserved");
+        taskContext.freeMemory(bytes);
+        memoryReservation.getAndAdd(-bytes);
     }
 
     public boolean isCpuTimerEnabled()
@@ -355,5 +373,14 @@ public class PipelineContext
                 return pipelineContext.getPipelineStats();
             }
         };
+    }
+
+    private static <K, V> boolean compareAndSet(ConcurrentMap<K, V> map, K key, V oldValue, V newValue)
+    {
+        if (oldValue == null) {
+            return map.putIfAbsent(key, newValue) == null;
+        }
+
+        return map.replace(key, oldValue, newValue);
     }
 }

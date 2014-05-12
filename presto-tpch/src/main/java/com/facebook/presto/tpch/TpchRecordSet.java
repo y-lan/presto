@@ -13,13 +13,14 @@
  */
 package com.facebook.presto.tpch;
 
-import com.facebook.presto.spi.ColumnType;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.RecordSet;
-import com.google.common.base.Charsets;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import io.airlift.tpch.TpchColumn;
 import io.airlift.tpch.TpchEntity;
 import io.airlift.tpch.TpchTable;
@@ -27,6 +28,7 @@ import io.airlift.tpch.TpchTable;
 import java.util.Iterator;
 import java.util.List;
 
+import static com.facebook.presto.tpch.TpchMetadata.getPrestoType;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.Iterables.transform;
 
@@ -50,7 +52,7 @@ public class TpchRecordSet<E extends TpchEntity>
 
     private final Iterable<E> table;
     private final List<TpchColumn<E>> columns;
-    private final List<ColumnType> columnTypes;
+    private final List<Type> columnTypes;
 
     public TpchRecordSet(Iterable<E> table, Iterable<TpchColumn<E>> columns)
     {
@@ -63,7 +65,7 @@ public class TpchRecordSet<E extends TpchEntity>
     }
 
     @Override
-    public List<ColumnType> getColumnTypes()
+    public List<Type> getColumnTypes()
     {
         return columnTypes;
     }
@@ -107,9 +109,9 @@ public class TpchRecordSet<E extends TpchEntity>
         }
 
         @Override
-        public ColumnType getType(int field)
+        public Type getType(int field)
         {
-            return ColumnType.fromNativeType(getTpchColumn(field).getType());
+            return getPrestoType(getTpchColumn(field).getType());
         }
 
         @Override
@@ -146,10 +148,10 @@ public class TpchRecordSet<E extends TpchEntity>
         }
 
         @Override
-        public byte[] getString(int field)
+        public Slice getSlice(int field)
         {
             checkState(row != null, "No current row");
-            return getTpchColumn(field).getString(row).getBytes(Charsets.UTF_8);
+            return Slices.utf8Slice(getTpchColumn(field).getString(row));
         }
 
         @Override
@@ -171,14 +173,14 @@ public class TpchRecordSet<E extends TpchEntity>
         }
     }
 
-    public static Function<TpchColumn<?>, ColumnType> columnTypeGetter()
+    public static Function<TpchColumn<?>, Type> columnTypeGetter()
     {
-        return new Function<TpchColumn<?>, ColumnType>()
+        return new Function<TpchColumn<?>, Type>()
         {
             @Override
-            public ColumnType apply(TpchColumn<?> columnMetadata)
+            public Type apply(TpchColumn<?> columnMetadata)
             {
-                return ColumnType.fromNativeType(columnMetadata.getType());
+                return getPrestoType(columnMetadata.getType());
             }
         };
     }

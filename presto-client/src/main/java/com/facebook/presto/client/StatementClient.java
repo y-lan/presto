@@ -64,6 +64,7 @@ public class StatementClient
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean gone = new AtomicBoolean();
     private final AtomicBoolean valid = new AtomicBoolean(true);
+    private final String timeZoneId;
 
     // we need to keep these information, which will be used in advance() later
     // maybe can find a better way to do this later
@@ -82,6 +83,7 @@ public class StatementClient
         this.httpClient = httpClient;
         this.responseHandler = createFullJsonResponseHandler(queryResultsCodec);
         this.debug = session.isDebug();
+        this.timeZoneId = session.getTimeZoneId();
         this.query = query;
         this.user = session.getUser();
         this.identify = session.getIdentify();
@@ -112,6 +114,8 @@ public class StatementClient
         if (session.getSchema() != null) {
             builder.setHeader(PrestoHeaders.PRESTO_SCHEMA, session.getSchema());
         }
+        builder.setHeader(PrestoHeaders.PRESTO_TIME_ZONE, session.getTimeZoneId());
+        builder.setHeader(PrestoHeaders.PRESTO_LANGUAGE, session.getLocale().toLanguageTag());
         builder.setHeader(USER_AGENT, USER_AGENT_VALUE);
 
         return builder.build();
@@ -120,6 +124,11 @@ public class StatementClient
     public String getQuery()
     {
         return query;
+    }
+
+    public String getTimeZoneId()
+    {
+        return timeZoneId;
     }
 
     public boolean isDebug()

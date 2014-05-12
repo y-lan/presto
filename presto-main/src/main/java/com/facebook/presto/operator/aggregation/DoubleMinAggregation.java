@@ -13,16 +13,15 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.block.Block;
-import com.facebook.presto.block.BlockBuilder;
-import com.facebook.presto.block.BlockCursor;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
 import com.facebook.presto.util.array.BooleanBigArray;
 import com.facebook.presto.util.array.DoubleBigArray;
 import com.google.common.base.Optional;
 
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_DOUBLE;
-import static com.facebook.presto.tuple.TupleInfo.Type.DOUBLE;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -33,7 +32,7 @@ public class DoubleMinAggregation
 
     public DoubleMinAggregation()
     {
-        super(SINGLE_DOUBLE, SINGLE_DOUBLE, DOUBLE);
+        super(DOUBLE, DOUBLE, DOUBLE);
     }
 
     @Override
@@ -52,7 +51,7 @@ public class DoubleMinAggregation
 
         public DoubleMinGroupedAccumulator(int valueChannel)
         {
-            super(valueChannel, SINGLE_DOUBLE, SINGLE_DOUBLE, Optional.<Integer>absent(), Optional.<Integer>absent());
+            super(valueChannel, DOUBLE, DOUBLE, Optional.<Integer>absent(), Optional.<Integer>absent());
 
             this.notNull = new BooleanBigArray();
 
@@ -94,7 +93,7 @@ public class DoubleMinAggregation
         {
             if (notNull.get((long) groupId)) {
                 double value = minValues.get((long) groupId);
-                output.append(value);
+                output.appendDouble(value);
             }
             else {
                 output.appendNull();
@@ -118,7 +117,7 @@ public class DoubleMinAggregation
 
         public DoubleMinAccumulator(int valueChannel)
         {
-            super(valueChannel, SINGLE_DOUBLE, SINGLE_DOUBLE, Optional.<Integer>absent(), Optional.<Integer>absent());
+            super(valueChannel, DOUBLE, DOUBLE, Optional.<Integer>absent(), Optional.<Integer>absent());
         }
 
         @Override
@@ -139,7 +138,7 @@ public class DoubleMinAggregation
         public void evaluateFinal(BlockBuilder out)
         {
             if (notNull) {
-                out.append(min);
+                out.appendDouble(min);
             }
             else {
                 out.appendNull();

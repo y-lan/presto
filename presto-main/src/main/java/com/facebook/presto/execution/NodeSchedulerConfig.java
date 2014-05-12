@@ -21,6 +21,7 @@ public class NodeSchedulerConfig
 {
     private int minCandidates = 10;
     private String rackTopologyScript = null;
+    private boolean locationAwareScheduling = true;
 
     @Min(1)
     public int getMinCandidates()
@@ -44,6 +45,18 @@ public class NodeSchedulerConfig
     public NodeSchedulerConfig setRackTopologyScript(String script)
     {
         this.rackTopologyScript = script;
+        return this;
+    }
+
+    public boolean isLocationAwareSchedulingEnabled()
+    {
+        return locationAwareScheduling;
+    }
+
+    @Config("node-scheduler.location-aware-scheduling-enabled")
+    public NodeSchedulerConfig setLocationAwareSchedulingEnabled(boolean locationAwareScheduling)
+    {
+        this.locationAwareScheduling = locationAwareScheduling;
         return this;
     }
 }

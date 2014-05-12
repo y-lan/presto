@@ -13,14 +13,15 @@
  */
 package com.facebook.presto.example;
 
-import com.facebook.presto.spi.ColumnType;
 import com.facebook.presto.spi.RecordCursor;
-import com.google.common.base.Charsets;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.io.CountingInputStream;
 import com.google.common.io.InputSupplier;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,6 +29,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.io.ByteStreams.asByteSource;
@@ -83,7 +88,7 @@ public class ExampleRecordCursor
     }
 
     @Override
-    public ColumnType getType(int field)
+    public Type getType(int field)
     {
         checkArgument(field < columnHandles.size(), "Invalid field index");
         return columnHandles.get(field).getColumnType();
@@ -112,29 +117,29 @@ public class ExampleRecordCursor
     @Override
     public boolean getBoolean(int field)
     {
-        checkFieldType(field, ColumnType.BOOLEAN);
+        checkFieldType(field, BOOLEAN);
         return Boolean.parseBoolean(getFieldValue(field));
     }
 
     @Override
     public long getLong(int field)
     {
-        checkFieldType(field, ColumnType.LONG);
+        checkFieldType(field, BIGINT);
         return Long.parseLong(getFieldValue(field));
     }
 
     @Override
     public double getDouble(int field)
     {
-        checkFieldType(field, ColumnType.DOUBLE);
+        checkFieldType(field, DOUBLE);
         return Double.parseDouble(getFieldValue(field));
     }
 
     @Override
-    public byte[] getString(int field)
+    public Slice getSlice(int field)
     {
-        checkFieldType(field, ColumnType.STRING);
-        return getFieldValue(field).getBytes(Charsets.UTF_8);
+        checkFieldType(field, VARCHAR);
+        return Slices.utf8Slice(getFieldValue(field));
     }
 
     @Override
@@ -144,10 +149,10 @@ public class ExampleRecordCursor
         return Strings.isNullOrEmpty(getFieldValue(field));
     }
 
-    private void checkFieldType(int field, ColumnType expected)
+    private void checkFieldType(int field, Type expected)
     {
-        ColumnType actual = getType(field);
-        checkArgument(actual == expected, "Expected field %s to be type %s but is %s", field, expected, actual);
+        Type actual = getType(field);
+        checkArgument(actual.equals(expected), "Expected field %s to be type %s but is %s", field, expected, actual);
     }
 
     @Override

@@ -14,6 +14,7 @@
 package com.facebook.presto.sql.analyzer;
 
 import com.facebook.presto.metadata.Metadata;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.sql.planner.DistributedLogicalPlanner;
 import com.facebook.presto.sql.planner.LogicalPlanner;
 import com.facebook.presto.sql.planner.Plan;
@@ -31,12 +32,12 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 public class QueryExplainer
 {
-    public final Session session;
+    public final ConnectorSession session;
     public final List<PlanOptimizer> planOptimizers;
     public final Metadata metadata;
     public final boolean experimentalSyntaxEnabled;
 
-    public QueryExplainer(Session session,
+    public QueryExplainer(ConnectorSession session,
             List<PlanOptimizer> planOptimizers,
             Metadata metadata,
             boolean experimentalSyntaxEnabled)
@@ -52,10 +53,10 @@ public class QueryExplainer
         switch (planType) {
             case LOGICAL:
                 Plan plan = getLogicalPlan(statement);
-                return PlanPrinter.textLogicalPlan(plan.getRoot(), plan.getTypes());
+                return PlanPrinter.textLogicalPlan(plan.getRoot(), plan.getTypes(), metadata);
             case DISTRIBUTED:
                 SubPlan subPlan = getDistributedPlan(statement);
-                return PlanPrinter.textDistributedPlan(subPlan);
+                return PlanPrinter.textDistributedPlan(subPlan, metadata);
         }
         throw new IllegalArgumentException("Unhandled plan type: " + planType);
     }
@@ -104,6 +105,6 @@ public class QueryExplainer
         LogicalPlanner logicalPlanner = new LogicalPlanner(session, planOptimizers, idAllocator, metadata);
         Plan plan = logicalPlanner.plan(analysis);
 
-        return new DistributedLogicalPlanner(metadata, idAllocator).createSubPlans(plan, false);
+        return new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, false);
     }
 }

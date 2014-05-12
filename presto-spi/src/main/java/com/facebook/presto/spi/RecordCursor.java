@@ -13,6 +13,9 @@
  */
 package com.facebook.presto.spi;
 
+import com.facebook.presto.spi.type.Type;
+import io.airlift.slice.Slice;
+
 import java.io.Closeable;
 
 public interface RecordCursor
@@ -24,7 +27,7 @@ public interface RecordCursor
 
     long getReadTimeNanos();
 
-    ColumnType getType(int field);
+    Type getType(int field);
 
     boolean advanceNextPosition();
 
@@ -34,7 +37,7 @@ public interface RecordCursor
 
     double getDouble(int field);
 
-    byte[] getString(int field);
+    Slice getSlice(int field);
 
     boolean isNull(int field);
 

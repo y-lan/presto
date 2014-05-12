@@ -13,15 +13,17 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.block.Block;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.operator.Page;
-import com.facebook.presto.tuple.TupleInfo;
+import com.facebook.presto.spi.type.Type;
 
 public interface Accumulator
 {
-    TupleInfo getFinalTupleInfo();
+    long getEstimatedSize();
 
-    TupleInfo getIntermediateTupleInfo();
+    Type getFinalType();
+
+    Type getIntermediateType();
 
     void addInput(Page page);
 

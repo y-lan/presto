@@ -13,23 +13,25 @@
  */
 package com.facebook.presto.cassandra;
 
-import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.ConnectorColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.Connector;
 import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.ConnectorMetadata;
+import com.facebook.presto.spi.ConnectorPartitionResult;
 import com.facebook.presto.spi.ConnectorRecordSetProvider;
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.ConnectorSplitSource;
+import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableMetadata;
-import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.SchemaNotFoundException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SchemaTablePrefix;
-import com.facebook.presto.spi.Split;
-import com.facebook.presto.spi.SplitSource;
-import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -58,9 +60,15 @@ import org.testng.annotations.Test;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.airlift.testing.Assertions.assertInstanceOf;
 import static org.testng.Assert.assertEquals;
@@ -71,6 +79,7 @@ import static org.testng.Assert.fail;
 
 public class TestCassandraConnector
 {
+    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "catalog", "test", UTC_KEY, Locale.ENGLISH, null, null);
     protected static final String INVALID_DATABASE = "totally_invalid_database";
 
     private ConnectorMetadata metadata;
@@ -134,7 +143,7 @@ public class TestCassandraConnector
     public void testGetDatabaseNames()
             throws Exception
     {
-        List<String> databases = metadata.listSchemaNames();
+        List<String> databases = metadata.listSchemaNames(SESSION);
         assertTrue(databases.contains(database.toLowerCase()));
     }
 
@@ -142,7 +151,7 @@ public class TestCassandraConnector
     public void testGetTableNames()
             throws Exception
     {
-        List<SchemaTableName> tables = metadata.listTables(database);
+        List<SchemaTableName> tables = metadata.listTables(SESSION, database);
         assertTrue(tables.contains(table));
     }
 
@@ -151,31 +160,31 @@ public class TestCassandraConnector
     public void testGetTableNamesException()
             throws Exception
     {
-        metadata.listTables(INVALID_DATABASE);
+        metadata.listTables(SESSION, INVALID_DATABASE);
     }
 
     @Test
     public void testListUnknownSchema()
     {
-        assertNull(metadata.getTableHandle(new SchemaTableName("totally_invalid_database_name", "dual")));
-        assertEquals(metadata.listTables("totally_invalid_database_name"), ImmutableList.of());
-        assertEquals(metadata.listTableColumns(new SchemaTablePrefix("totally_invalid_database_name", "dual")), ImmutableMap.of());
+        assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("totally_invalid_database_name", "dual")));
+        assertEquals(metadata.listTables(SESSION, "totally_invalid_database_name"), ImmutableList.of());
+        assertEquals(metadata.listTableColumns(SESSION, new SchemaTablePrefix("totally_invalid_database_name", "dual")), ImmutableMap.of());
     }
 
     @Test
     public void testGetRecords()
             throws Exception
     {
-        TableHandle tableHandle = getTableHandle(table);
+        ConnectorTableHandle tableHandle = getTableHandle(table);
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
-        List<ColumnHandle> columnHandles = ImmutableList.copyOf(metadata.getColumnHandles(tableHandle).values());
+        List<ConnectorColumnHandle> columnHandles = ImmutableList.copyOf(metadata.getColumnHandles(tableHandle).values());
         Map<String, Integer> columnIndex = indexColumns(columnHandles);
 
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.all());
-        List<Split> splits = getAllSplits(splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions()));
+        ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.<ConnectorColumnHandle>all());
+        List<ConnectorSplit> splits = getAllSplits(splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions()));
 
         long rowNumber = 0;
-        for (Split split : splits) {
+        for (ConnectorSplit split : splits) {
             CassandraSplit cassandraSplit = (CassandraSplit) split;
 
             long completedBytes = 0;
@@ -190,25 +199,25 @@ public class TestCassandraConnector
 
                     rowNumber++;
 
-                    String keyValue = toUtf8String(cursor.getString(columnIndex.get("key")));
+                    String keyValue = cursor.getSlice(columnIndex.get("key")).toStringUtf8();
                     assertTrue(keyValue.startsWith("key "));
                     int rowId = Integer.parseInt(keyValue.substring(4));
 
                     assertEquals(keyValue, String.format("key %04d", rowId));
-                    assertEquals(toUtf8String(cursor.getString(columnIndex.get("t_utf8"))), "utf8 " + rowId);
+                    assertEquals(cursor.getSlice(columnIndex.get("t_utf8")).toStringUtf8(), "utf8 " + rowId);
 
                     // bytes are encoded as a hex string for some reason
-                    assertEquals(toUtf8String(cursor.getString(columnIndex.get("t_bytes"))), String.format("0x%08X", rowId));
+                    assertEquals(cursor.getSlice(columnIndex.get("t_bytes")).toStringUtf8(), String.format("0x%08X", rowId));
 
                     // VARINT is returned as a string
-                    assertEquals(toUtf8String(cursor.getString(columnIndex.get("t_integer"))), String.valueOf(rowId));
+                    assertEquals(cursor.getSlice(columnIndex.get("t_integer")).toStringUtf8(), String.valueOf(rowId));
 
                     assertEquals(cursor.getLong(columnIndex.get("t_long")), 1000 + rowId);
 
-                    assertEquals(toUtf8String(cursor.getString(columnIndex.get("t_uuid"))), String.format("00000000-0000-0000-0000-%012d", rowId));
+                    assertEquals(cursor.getSlice(columnIndex.get("t_uuid")).toStringUtf8(), String.format("00000000-0000-0000-0000-%012d", rowId));
 
                     // lexical UUIDs are encoded as a hex string for some reason
-                    assertEquals(toUtf8String(cursor.getString(columnIndex.get("t_lexical_uuid"))), String.format("0x%032X", rowId));
+                    assertEquals(cursor.getSlice(columnIndex.get("t_lexical_uuid")).toStringUtf8(), String.format("0x%032X", rowId));
 
                     long newCompletedBytes = cursor.getCompletedBytes();
                     assertTrue(newCompletedBytes >= completedBytes);
@@ -229,54 +238,54 @@ public class TestCassandraConnector
         for (int columnIndex = 0; columnIndex < schema.size(); columnIndex++) {
             ColumnMetadata column = schema.get(columnIndex);
             if (!cursor.isNull(columnIndex)) {
-                switch (column.getType()) {
-                    case BOOLEAN:
-                        cursor.getBoolean(columnIndex);
-                        break;
-                    case LONG:
-                        cursor.getLong(columnIndex);
-                        break;
-                    case DOUBLE:
-                        cursor.getDouble(columnIndex);
-                        break;
-                    case STRING:
-                        try {
-                            cursor.getString(columnIndex);
-                        }
-                        catch (RuntimeException e) {
-                            throw new RuntimeException("column " + column, e);
-                        }
-                        break;
-                    default:
-                        fail("Unknown primitive type " + columnIndex);
+                Type type = column.getType();
+                if (BOOLEAN.equals(type)) {
+                    cursor.getBoolean(columnIndex);
+                }
+                else if (BIGINT.equals(type)) {
+                    cursor.getLong(columnIndex);
+                }
+                else if (DOUBLE.equals(type)) {
+                    cursor.getDouble(columnIndex);
+                }
+                else if (VARCHAR.equals(type)) {
+                    try {
+                        cursor.getSlice(columnIndex);
+                    }
+                    catch (RuntimeException e) {
+                        throw new RuntimeException("column " + column, e);
+                    }
+                }
+                else {
+                    fail("Unknown primitive type " + columnIndex);
                 }
             }
         }
     }
 
-    private TableHandle getTableHandle(SchemaTableName tableName)
+    private ConnectorTableHandle getTableHandle(SchemaTableName tableName)
     {
-        TableHandle handle = metadata.getTableHandle(tableName);
+        ConnectorTableHandle handle = metadata.getTableHandle(SESSION, tableName);
         checkArgument(handle != null, "table not found: %s", tableName);
         return handle;
     }
 
-    private static List<Split> getAllSplits(SplitSource splitSource)
+    private static List<ConnectorSplit> getAllSplits(ConnectorSplitSource splitSource)
             throws InterruptedException
     {
-        ImmutableList.Builder<Split> splits = ImmutableList.builder();
+        ImmutableList.Builder<ConnectorSplit> splits = ImmutableList.builder();
         while (!splitSource.isFinished()) {
-            List<Split> batch = splitSource.getNextBatch(1000);
+            List<ConnectorSplit> batch = splitSource.getNextBatch(1000);
             splits.addAll(batch);
         }
         return splits.build();
     }
 
-    private static ImmutableMap<String, Integer> indexColumns(List<ColumnHandle> columnHandles)
+    private static ImmutableMap<String, Integer> indexColumns(List<ConnectorColumnHandle> columnHandles)
     {
         ImmutableMap.Builder<String, Integer> index = ImmutableMap.builder();
         int i = 0;
-        for (ColumnHandle columnHandle : columnHandles) {
+        for (ConnectorColumnHandle columnHandle : columnHandles) {
             checkArgument(columnHandle instanceof CassandraColumnHandle, "columnHandle is not an instance of CassandraColumnHandle");
             CassandraColumnHandle hiveColumnHandle = (CassandraColumnHandle) columnHandle;
             index.put(hiveColumnHandle.getName(), i);

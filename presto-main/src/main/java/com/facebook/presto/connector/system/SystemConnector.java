@@ -15,6 +15,7 @@ package com.facebook.presto.connector.system;
 
 import com.facebook.presto.connector.InternalConnector;
 import com.facebook.presto.spi.ConnectorHandleResolver;
+import com.facebook.presto.spi.ConnectorIndexResolver;
 import com.facebook.presto.spi.ConnectorMetadata;
 import com.facebook.presto.spi.ConnectorOutputHandleResolver;
 import com.facebook.presto.spi.ConnectorRecordSetProvider;
@@ -28,6 +29,8 @@ import javax.inject.Inject;
 public class SystemConnector
         implements InternalConnector
 {
+    public static final String CONNECTOR_ID = "system";
+
     private final SystemTablesMetadata metadata;
     private final SystemSplitManager splitManager;
     private final SystemDataStreamProvider dataStreamProvider;
@@ -81,6 +84,12 @@ public class SystemConnector
 
     @Override
     public ConnectorOutputHandleResolver getOutputHandleResolver()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ConnectorIndexResolver getIndexResolver()
     {
         throw new UnsupportedOperationException();
     }

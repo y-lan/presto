@@ -14,13 +14,16 @@
 package com.facebook.presto.hive;
 
 import com.facebook.presto.spi.RecordCursor;
+import com.facebook.presto.spi.type.TimestampType;
+import com.facebook.presto.spi.type.Type;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Charsets;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -39,6 +42,7 @@ import org.apache.hadoop.mapred.FileSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.util.Progressable;
 import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormat;
 import org.testng.annotations.Test;
 
 import java.io.File;
@@ -48,6 +52,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.collect.Iterables.transform;
 import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardListObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardMapObjectInspector;
@@ -75,6 +83,7 @@ public abstract class AbstractTestHiveFileFormats
 
     private static final List<ObjectInspector> FIELD_INSPECTORS = ImmutableList.of(
                 javaStringObjectInspector,
+                getStandardListObjectInspector(javaIntObjectInspector),
                 javaStringObjectInspector,
                 javaStringObjectInspector,
                 javaByteObjectInspector,
@@ -126,6 +135,7 @@ public abstract class AbstractTestHiveFileFormats
 
     protected static final List<String> COLUMN_NAMES = ImmutableList.of(
                 "t_null_string",
+                "t_null_array_int",
                 "t_empty_string",
                 "t_string",
                 "t_tinyint",
@@ -161,13 +171,15 @@ public abstract class AbstractTestHiveFileFormats
     protected static final String COLUMN_NAMES_STRING = Joiner.on(",").join(COLUMN_NAMES);
 
     public static final long TIMESTAMP = new DateTime(2011, 5, 6, 7, 8, 9, 123).getMillis();
+    public static final String TIMESTAMP_STRING = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS").print(TIMESTAMP);
 
     // Pairs of <value-to-write-to-Hive, value-expected-from-Presto>
     @SuppressWarnings("unchecked")
     private static final List<Pair<Object, Object>>  TEST_VALUES = ImmutableList.of(
                 Pair.<Object, Object>of(null, null),
-                Pair.<Object, Object>of("", new byte[0]),
-                Pair.<Object, Object>of("test", "test".getBytes(Charsets.UTF_8)),
+                Pair.<Object, Object>of(null, null),
+                Pair.<Object, Object>of("", Slices.EMPTY_SLICE),
+                Pair.<Object, Object>of("test", Slices.utf8Slice("test")),
                 Pair.<Object, Object>of((byte) 1, 1L),
                 Pair.<Object, Object>of((short) 2, 2L),
                 Pair.<Object, Object>of(3, 3L),
@@ -175,8 +187,8 @@ public abstract class AbstractTestHiveFileFormats
                 Pair.<Object, Object>of(5.1f, 5.1),
                 Pair.<Object, Object>of(6.2, 6.2),
                 Pair.<Object, Object>of(true, true),
-                Pair.<Object, Object>of(new Timestamp(TIMESTAMP), TIMESTAMP / 1000),
-                Pair.<Object, Object>of("test2".getBytes(Charsets.UTF_8), "test2".getBytes(Charsets.UTF_8)),
+                Pair.<Object, Object>of(new Timestamp(TIMESTAMP), TIMESTAMP),
+                Pair.<Object, Object>of(Slices.utf8Slice("test2"), Slices.utf8Slice("test2")),
                 Pair.<Object, Object>of(ImmutableMap.of("test", "test"), "{\"test\":\"test\"}"),
                 Pair.<Object, Object>of(ImmutableMap.of((byte) 1, (byte) 1), "{\"1\":1}"),
                 Pair.<Object, Object>of(ImmutableMap.of((short) 2, (short) 2), "{\"2\":2}"),
@@ -185,7 +197,7 @@ public abstract class AbstractTestHiveFileFormats
                 Pair.<Object, Object>of(ImmutableMap.of(5.0f, 5.0f), "{\"5.0\":5.0}"),
                 Pair.<Object, Object>of(ImmutableMap.of(6.0, 6.0), "{\"6.0\":6.0}"),
                 Pair.<Object, Object>of(ImmutableMap.of(true, true), "{\"true\":true}"),
-                Pair.<Object, Object>of(ImmutableMap.of(new Timestamp(TIMESTAMP), new Timestamp(TIMESTAMP)), String.format("{\"%d\":%d}", TIMESTAMP / 1000, TIMESTAMP / 1000)),
+                Pair.<Object, Object>of(ImmutableMap.of(new Timestamp(TIMESTAMP), new Timestamp(TIMESTAMP)), String.format("{\"%s\":\"%s\"}", TIMESTAMP_STRING, TIMESTAMP_STRING)),
                 Pair.<Object, Object>of(ImmutableList.of("test"), "[\"test\"]"),
                 Pair.<Object, Object>of(ImmutableList.of((byte) 1), "[1]"),
                 Pair.<Object, Object>of(ImmutableList.of((short) 2), "[2]"),
@@ -194,7 +206,7 @@ public abstract class AbstractTestHiveFileFormats
                 Pair.<Object, Object>of(ImmutableList.of(5.0f), "[5.0]"),
                 Pair.<Object, Object>of(ImmutableList.of(6.0), "[6.0]"),
                 Pair.<Object, Object>of(ImmutableList.of(true), "[true]"),
-                Pair.<Object, Object>of(ImmutableList.of(new Timestamp(TIMESTAMP)), String.format("[%d]", TIMESTAMP / 1000)),
+                Pair.<Object, Object>of(ImmutableList.of(new Timestamp(TIMESTAMP)), String.format("[\"%s\"]", TIMESTAMP_STRING)),
                 Pair.<Object, Object>of(ImmutableMap.of("test", ImmutableList.<Object>of(new Integer[] {1})), "{\"test\":[{\"s_int\":1}]}")
         );
 
@@ -247,7 +259,11 @@ public abstract class AbstractTestHiveFileFormats
 
             for (int rowNumber = 0; rowNumber < NUM_ROWS; rowNumber++) {
                 for (int i = 0; i < TEST_VALUES.size(); i++) {
-                    objectInspector.setStructFieldData(row, fields.get(i), TEST_VALUES.get(i).getKey());
+                    Object key = TEST_VALUES.get(i).getKey();
+                    if (key instanceof Slice) {
+                        key = ((Slice) key).getBytes();
+                    }
+                    objectInspector.setStructFieldData(row, fields.get(i), key);
                 }
 
                 Writable record = serDe.serialize(row, objectInspector);
@@ -270,25 +286,30 @@ public abstract class AbstractTestHiveFileFormats
         for (int row = 0; row < NUM_ROWS; row++) {
             assertTrue(cursor.advanceNextPosition());
             assertTrue(cursor.isNull(0));
-            for (int i = 1; i < TEST_VALUES.size(); i++) {
+            assertTrue(cursor.isNull(1));
+            for (int i = 2; i < TEST_VALUES.size(); i++) {
                 Object fieldFromCursor;
-                HiveType type = HiveType.getHiveType(FIELD_INSPECTORS.get(i));
-                switch (type.getNativeType()) {
-                    case BOOLEAN:
-                        fieldFromCursor = cursor.getBoolean(i);
-                        break;
-                    case LONG:
-                        fieldFromCursor = cursor.getLong(i);
-                        break;
-                    case DOUBLE:
-                        fieldFromCursor = cursor.getDouble(i);
-                        break;
-                    case STRING:
-                        fieldFromCursor = cursor.getString(i);
-                        break;
-                    default:
-                        throw new RuntimeException("unknown type");
+
+                Type type = HiveType.getHiveType(FIELD_INSPECTORS.get(i)).getNativeType();
+                if (BOOLEAN.equals(type)) {
+                    fieldFromCursor = cursor.getBoolean(i);
                 }
+                else if (BIGINT.equals(type)) {
+                    fieldFromCursor = cursor.getLong(i);
+                }
+                else if (DOUBLE.equals(type)) {
+                    fieldFromCursor = cursor.getDouble(i);
+                }
+                else if (VARCHAR.equals(type)) {
+                    fieldFromCursor = cursor.getSlice(i);
+                }
+                else if (TimestampType.TIMESTAMP.equals(type)) {
+                    fieldFromCursor = cursor.getLong(i);
+                }
+                else {
+                    throw new RuntimeException("unknown type");
+                }
+
                 if (FIELD_INSPECTORS.get(i).getTypeName().equals("float") ||
                         FIELD_INSPECTORS.get(i).getTypeName().equals("double")) {
                     assertEquals((double) fieldFromCursor, (double) TEST_VALUES.get(i).getValue(), EPSILON);
@@ -299,7 +320,7 @@ public abstract class AbstractTestHiveFileFormats
                 else {
                     ObjectMapper mapper = new ObjectMapper();
                     JsonNode expected = mapper.readTree((String) TEST_VALUES.get(i).getValue());
-                    JsonNode actual = mapper.readTree((byte[]) fieldFromCursor);
+                    JsonNode actual = mapper.readTree(((Slice) fieldFromCursor).getBytes());
                     assertEquals(actual, expected, String.format("Wrong value for column %s", COLUMN_NAMES.get(i)));
                 }
             }

@@ -17,12 +17,10 @@ import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.metadata.TableMetadata;
 import com.facebook.presto.spi.ColumnMetadata;
-import com.facebook.presto.spi.ColumnType;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.Field;
-import com.facebook.presto.sql.analyzer.Session;
-import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.planner.optimizations.PlanOptimizer;
 import com.facebook.presto.sql.planner.plan.OutputNode;
 import com.facebook.presto.sql.planner.plan.PlanNode;
@@ -34,16 +32,19 @@ import com.google.common.collect.ImmutableList;
 
 import java.util.List;
 
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+
 public class LogicalPlanner
 {
     private final PlanNodeIdAllocator idAllocator;
 
-    private final Session session;
+    private final ConnectorSession session;
     private final List<PlanOptimizer> planOptimizers;
     private final SymbolAllocator symbolAllocator = new SymbolAllocator();
     private final Metadata metadata;
 
-    public LogicalPlanner(Session session,
+    public LogicalPlanner(ConnectorSession session,
             List<PlanOptimizer> planOptimizers,
             PlanNodeIdAllocator idAllocator,
             Metadata metadata)
@@ -95,8 +96,8 @@ public class LogicalPlanner
         TableMetadata tableMetadata = createTableMetadata(destination, getTableColumns(plan));
 
         ImmutableList<Symbol> writerOutputs = ImmutableList.of(
-                symbolAllocator.newSymbol("partialrows", Type.BIGINT),
-                symbolAllocator.newSymbol("fragment", Type.VARCHAR));
+                symbolAllocator.newSymbol("partialrows", BIGINT),
+                symbolAllocator.newSymbol("fragment", VARCHAR));
 
         TableWriterNode writerNode = new TableWriterNode(
                 idAllocator.getNextId(),
@@ -108,9 +109,9 @@ public class LogicalPlanner
                 Optional.<Symbol>absent(),
                 destination.getCatalogName(),
                 tableMetadata,
-                metadata.canCreateSampledTables(destination.getCatalogName()));
+                metadata.canCreateSampledTables(session, destination.getCatalogName()));
 
-        List<Symbol> outputs = ImmutableList.of(symbolAllocator.newSymbol("rows", Type.BIGINT));
+        List<Symbol> outputs = ImmutableList.of(symbolAllocator.newSymbol("rows", BIGINT));
 
         TableCommitNode commitNode = new TableCommitNode(
                 idAllocator.getNextId(),
@@ -151,9 +152,7 @@ public class LogicalPlanner
         List<Field> fields = plan.getDescriptor().getFields();
         for (int i = 0; i < fields.size(); i++) {
             Field field = fields.get(i);
-            String name = field.getName().get();
-            ColumnType type = field.getType().getColumnType();
-            columns.add(new ColumnMetadata(name, type, i, false));
+            columns.add(new ColumnMetadata(field.getName().get(), field.getType(), i, false));
         }
         return columns.build();
     }

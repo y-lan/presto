@@ -16,25 +16,29 @@ package com.facebook.presto.util;
 import com.facebook.presto.ScheduledSplit;
 import com.facebook.presto.TaskSource;
 import com.facebook.presto.connector.ConnectorManager;
-import com.facebook.presto.connector.dual.DualDataStreamProvider;
-import com.facebook.presto.connector.dual.DualMetadata;
-import com.facebook.presto.connector.dual.DualSplitManager;
-import com.facebook.presto.connector.informationSchema.InformationSchemaDataStreamProvider;
-import com.facebook.presto.connector.informationSchema.InformationSchemaSplitManager;
+import com.facebook.presto.connector.dual.DualConnector;
 import com.facebook.presto.connector.system.CatalogSystemTable;
 import com.facebook.presto.connector.system.NodesSystemTable;
+import com.facebook.presto.connector.system.SystemConnector;
 import com.facebook.presto.connector.system.SystemDataStreamProvider;
 import com.facebook.presto.connector.system.SystemSplitManager;
 import com.facebook.presto.connector.system.SystemTablesManager;
 import com.facebook.presto.connector.system.SystemTablesMetadata;
+import com.facebook.presto.execution.SplitSource;
 import com.facebook.presto.execution.TaskId;
+import com.facebook.presto.index.IndexManager;
+import com.facebook.presto.metadata.ColumnHandle;
 import com.facebook.presto.metadata.HandleResolver;
 import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.LocalStorageManager;
 import com.facebook.presto.metadata.MetadataManager;
 import com.facebook.presto.metadata.MockLocalStorageManager;
 import com.facebook.presto.metadata.OutputTableHandleResolver;
+import com.facebook.presto.metadata.Partition;
+import com.facebook.presto.metadata.PartitionResult;
 import com.facebook.presto.metadata.QualifiedTableName;
+import com.facebook.presto.metadata.Split;
+import com.facebook.presto.metadata.TableHandle;
 import com.facebook.presto.operator.Driver;
 import com.facebook.presto.operator.DriverContext;
 import com.facebook.presto.operator.DriverFactory;
@@ -45,25 +49,19 @@ import com.facebook.presto.operator.OperatorFactory;
 import com.facebook.presto.operator.OutputFactory;
 import com.facebook.presto.operator.RecordSinkManager;
 import com.facebook.presto.operator.TaskContext;
-import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.Connector;
 import com.facebook.presto.spi.ConnectorFactory;
-import com.facebook.presto.spi.ConnectorSplitManager;
-import com.facebook.presto.spi.Partition;
-import com.facebook.presto.spi.PartitionResult;
-import com.facebook.presto.spi.Split;
-import com.facebook.presto.spi.SplitSource;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.SystemTable;
-import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.DataStreamManager;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.Analyzer;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.sql.analyzer.QueryExplainer;
-import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.gen.ExpressionCompiler;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.planner.DistributedLogicalPlanner;
@@ -80,7 +78,7 @@ import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.facebook.presto.sql.planner.plan.TableScanNode;
 import com.facebook.presto.sql.planner.plan.ValuesNode;
 import com.facebook.presto.sql.tree.Statement;
-import com.facebook.presto.tuple.TupleInfo;
+import com.facebook.presto.type.TypeRegistry;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -99,7 +97,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.sql.parser.TreeAssertions.assertFormattedSql;
-import static com.facebook.presto.tuple.TupleInfo.Type.fromColumnType;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -107,13 +104,15 @@ import static org.testng.Assert.assertTrue;
 
 public class LocalQueryRunner
 {
-    private final Session session;
+    private final ConnectorSession session;
     private final ExecutorService executor;
 
     private final InMemoryNodeManager nodeManager;
+    private final TypeRegistry typeRegistry;
     private final MetadataManager metadata;
     private final SplitManager splitManager;
     private final DataStreamManager dataStreamProvider;
+    private final IndexManager indexManager;
     private final LocalStorageManager storageManager;
     private final RecordSinkManager recordSinkManager;
 
@@ -122,49 +121,26 @@ public class LocalQueryRunner
 
     private boolean printPlan;
 
-    public LocalQueryRunner(Session session, ExecutorService executor)
+    public LocalQueryRunner(ConnectorSession session, ExecutorService executor)
     {
         this.session = checkNotNull(session, "session is null");
         this.executor = checkNotNull(executor, "executor is null");
 
         this.nodeManager = new InMemoryNodeManager();
-        this.metadata = new MetadataManager(new FeaturesConfig().setExperimentalSyntaxEnabled(true));
-        this.splitManager = new SplitManager(ImmutableSet.<ConnectorSplitManager>of());
+        this.typeRegistry = new TypeRegistry();
+        this.metadata = new MetadataManager(new FeaturesConfig().setExperimentalSyntaxEnabled(true), typeRegistry);
+        this.splitManager = new SplitManager();
         this.dataStreamProvider = new DataStreamManager();
+        this.indexManager = new IndexManager();
         this.recordSinkManager = new RecordSinkManager();
         this.storageManager = MockLocalStorageManager.createMockLocalStorageManager();
 
         this.compiler = new ExpressionCompiler(metadata);
 
-        this.connectorManager = new ConnectorManager(
-                metadata,
-                splitManager,
-                dataStreamProvider,
-                recordSinkManager,
-                new HandleResolver(),
-                new OutputTableHandleResolver(),
-                ImmutableMap.<String, ConnectorFactory>of(),
-                ImmutableMap.<String, Connector>of());
-
-        // information schema
-        splitManager.addConnectorSplitManager(new InformationSchemaSplitManager(nodeManager));
-        dataStreamProvider.addConnectorDataStreamProvider(new InformationSchemaDataStreamProvider(metadata, splitManager));
-
-        // dual table
-        metadata.addInternalSchemaMetadata(MetadataManager.INTERNAL_CONNECTOR_ID, new DualMetadata());
-        splitManager.addConnectorSplitManager(new DualSplitManager(nodeManager));
-        dataStreamProvider.addConnectorDataStreamProvider(new DualDataStreamProvider());
-
         // sys schema
         SystemTablesMetadata systemTablesMetadata = new SystemTablesMetadata();
-        metadata.addInternalSchemaMetadata(MetadataManager.INTERNAL_CONNECTOR_ID, systemTablesMetadata);
-
         SystemSplitManager systemSplitManager = new SystemSplitManager(nodeManager);
-        splitManager.addConnectorSplitManager(systemSplitManager);
-
         SystemDataStreamProvider systemDataStreamProvider = new SystemDataStreamProvider();
-        dataStreamProvider.addConnectorDataStreamProvider(systemDataStreamProvider);
-
         SystemTablesManager systemTablesManager = new SystemTablesManager(systemTablesMetadata, systemSplitManager, systemDataStreamProvider, ImmutableSet.<SystemTable>of());
 
         // sys.node
@@ -172,11 +148,30 @@ public class LocalQueryRunner
 
         // sys.catalog
         systemTablesManager.addTable(new CatalogSystemTable(metadata));
+
+        this.connectorManager = new ConnectorManager(
+                metadata,
+                splitManager,
+                dataStreamProvider,
+                indexManager,
+                recordSinkManager,
+                new HandleResolver(),
+                new OutputTableHandleResolver(),
+                ImmutableMap.<String, ConnectorFactory>of(),
+                ImmutableMap.<String, Connector>of(
+                        DualConnector.CONNECTOR_ID, new DualConnector(nodeManager),
+                        SystemConnector.CONNECTOR_ID, new SystemConnector(systemTablesMetadata, systemSplitManager, systemDataStreamProvider)),
+                nodeManager);
     }
 
     public InMemoryNodeManager getNodeManager()
     {
         return nodeManager;
+    }
+
+    public TypeRegistry getTypeManager()
+    {
+        return typeRegistry;
     }
 
     public MetadataManager getMetadata()
@@ -214,14 +209,14 @@ public class LocalQueryRunner
         }
 
         @Override
-        public OperatorFactory createOutputOperator(final int operatorId, final List<TupleInfo> sourceTupleInfo)
+        public OperatorFactory createOutputOperator(final int operatorId, final List<Type> sourceType)
         {
-            checkNotNull(sourceTupleInfo, "sourceTupleInfo is null");
+            checkNotNull(sourceType, "sourceType is null");
 
             return new OperatorFactory()
             {
                 @Override
-                public List<TupleInfo> getTupleInfos()
+                public List<Type> getTypes()
                 {
                     return ImmutableList.of();
                 }
@@ -230,7 +225,7 @@ public class LocalQueryRunner
                 public Operator createOperator(DriverContext driverContext)
                 {
                     OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, MaterializingOperator.class.getSimpleName());
-                    MaterializingOperator operator = new MaterializingOperator(operatorContext, sourceTupleInfo);
+                    MaterializingOperator operator = new MaterializingOperator(operatorContext, sourceType);
 
                     if (!materializingOperator.compareAndSet(null, operator)) {
                         throw new IllegalArgumentException("Output already created");
@@ -281,7 +276,7 @@ public class LocalQueryRunner
 
         PlanNodeIdAllocator idAllocator = new PlanNodeIdAllocator();
         FeaturesConfig featuresConfig = new FeaturesConfig().setExperimentalSyntaxEnabled(true);
-        PlanOptimizersFactory planOptimizersFactory = new PlanOptimizersFactory(metadata, splitManager, featuresConfig);
+        PlanOptimizersFactory planOptimizersFactory = new PlanOptimizersFactory(metadata, splitManager, indexManager, featuresConfig);
 
         QueryExplainer queryExplainer = new QueryExplainer(session, planOptimizersFactory.get(), metadata, featuresConfig.isExperimentalSyntaxEnabled());
         Analyzer analyzer = new Analyzer(session, metadata, Optional.of(queryExplainer), featuresConfig.isExperimentalSyntaxEnabled());
@@ -290,10 +285,10 @@ public class LocalQueryRunner
 
         Plan plan = new LogicalPlanner(session, planOptimizersFactory.get(), idAllocator, metadata).plan(analysis);
         if (printPlan) {
-            System.out.println(PlanPrinter.textLogicalPlan(plan.getRoot(), plan.getTypes()));
+            System.out.println(PlanPrinter.textLogicalPlan(plan.getRoot(), plan.getTypes(), metadata));
         }
 
-        SubPlan subplan = new DistributedLogicalPlanner(metadata, idAllocator).createSubPlans(plan, true);
+        SubPlan subplan = new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, true);
         assertTrue(subplan.getChildren().isEmpty(), "Expected subplan to have no children");
 
         LocalExecutionPlanner executionPlanner = new LocalExecutionPlanner(
@@ -302,6 +297,7 @@ public class LocalQueryRunner
                         .setNodeId("test-node")),
                 metadata,
                 dataStreamProvider,
+                indexManager,
                 storageManager,
                 recordSinkManager,
                 null,
@@ -371,28 +367,28 @@ public class LocalQueryRunner
         }
 
         // Otherwise return all partitions
-        PartitionResult matchingPartitions = splitManager.getPartitions(node.getTable(), Optional.<TupleDomain>absent());
+        PartitionResult matchingPartitions = splitManager.getPartitions(node.getTable(), Optional.<TupleDomain<ColumnHandle>>absent());
         return matchingPartitions.getPartitions();
     }
 
     public OperatorFactory createTableScanOperator(final int operatorId, String tableName, String... columnNames)
     {
         // look up the table
-        TableHandle tableHandle = metadata.getTableHandle(new QualifiedTableName(session.getCatalog(), session.getSchema(), tableName)).orNull();
+        TableHandle tableHandle = metadata.getTableHandle(session, new QualifiedTableName(session.getCatalog(), session.getSchema(), tableName)).orNull();
         checkArgument(tableHandle != null, "Table %s does not exist", tableName);
 
         // lookup the columns
         ImmutableList.Builder<ColumnHandle> columnHandlesBuilder = ImmutableList.builder();
-        ImmutableList.Builder<TupleInfo> columnTypesBuilder = ImmutableList.builder();
+        ImmutableList.Builder<Type> columnTypesBuilder = ImmutableList.builder();
         for (String columnName : columnNames) {
             ColumnHandle columnHandle = metadata.getColumnHandle(tableHandle, columnName).orNull();
             checkArgument(columnHandle != null, "Table %s does not have a column %s", tableName, columnName);
             columnHandlesBuilder.add(columnHandle);
             ColumnMetadata columnMetadata = metadata.getColumnMetadata(tableHandle, columnHandle);
-            columnTypesBuilder.add(new TupleInfo(fromColumnType(columnMetadata.getType())));
+            columnTypesBuilder.add(columnMetadata.getType());
         }
         final List<ColumnHandle> columnHandles = columnHandlesBuilder.build();
-        final List<TupleInfo> columnTypes = columnTypesBuilder.build();
+        final List<Type> columnTypes = columnTypesBuilder.build();
 
         // get the split for this table
         final Split split = getLocalQuerySplit(tableHandle);
@@ -400,7 +396,7 @@ public class LocalQueryRunner
         return new OperatorFactory()
         {
             @Override
-            public List<TupleInfo> getTupleInfos()
+            public List<Type> getTypes()
             {
                 return columnTypes;
             }
@@ -422,7 +418,7 @@ public class LocalQueryRunner
     private Split getLocalQuerySplit(TableHandle tableHandle)
     {
         try {
-            List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<TupleDomain>absent()).getPartitions();
+            List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<TupleDomain<ColumnHandle>>absent()).getPartitions();
             SplitSource splitSource = splitManager.getPartitionSplits(tableHandle, partitions);
             Split split = Iterables.getOnlyElement(splitSource.getNextBatch(1000));
             checkState(splitSource.isFinished(), "Expected only one split for a local query");
