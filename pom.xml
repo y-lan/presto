@@ -60,6 +60,8 @@
         <module>presto-hive-cdh5</module>
         <module>presto-example-http</module>
         <module>presto-tpch</module>
+        <module>presto-jdbc-plugin</module>
+        <module>presto-td-job</module>
         <module>presto-client</module>
         <module>presto-parser</module>
         <module>presto-main</module>
@@ -93,6 +95,20 @@
             <dependency>
                 <groupId>com.facebook.presto</groupId>
                 <artifactId>presto-example-http</artifactId>
+                <version>${project.version}</version>
+                <type>zip</type>
+            </dependency>
+
+            <dependency>
+                <groupId>com.facebook.presto</groupId>
+                <artifactId>presto-jdbc-plugin</artifactId>
+                <version>${project.version}</version>
+                <type>zip</type>
+            </dependency>
+
+            <dependency>
+                <groupId>com.facebook.presto</groupId>
+                <artifactId>presto-td-job</artifactId>
                 <version>${project.version}</version>
                 <type>zip</type>
             </dependency>

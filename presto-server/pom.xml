@@ -332,6 +332,22 @@
                                     <overWrite>false</overWrite>
                                     <outputDirectory>${project.build.directory}/plugin/example-http</outputDirectory>
                                 </artifactItem>
+                                <artifactItem>
+                                    <groupId>com.facebook.presto</groupId>
+                                    <artifactId>presto-jdbc-plugin</artifactId>
+                                    <version>${project.version}</version>
+                                    <type>zip</type>
+                                    <overWrite>false</overWrite>
+                                    <outputDirectory>${project.build.directory}/plugin/jdbc</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>com.facebook.presto</groupId>
+                                    <artifactId>presto-td-job</artifactId>
+                                    <version>${project.version}</version>
+                                    <type>zip</type>
+                                    <overWrite>false</overWrite>
+                                    <outputDirectory>${project.build.directory}/plugin/td-job</outputDirectory>
+                                </artifactItem>
                             </artifactItems>
                         </configuration>
                     </execution>
