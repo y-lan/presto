@@ -152,7 +152,7 @@ public class TdjobRecordCursor
     public Slice getSlice(int field)
     {
         checkFieldType(field, VARCHAR);
-        return Slices.utf8Slice(getFieldValue(field).toString());
+        return Slices.utf8Slice(getFieldValue(field).asRawValue().getString());
     }
 
     @Override

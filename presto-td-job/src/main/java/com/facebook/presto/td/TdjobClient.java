@@ -17,6 +17,7 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
 import com.google.common.io.InputSupplier;
@@ -37,6 +38,7 @@ import javax.inject.Inject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -49,6 +51,7 @@ import static io.airlift.http.client.ResponseHandlerUtils.propagate;
 public class TdjobClient
 {
     public static final String TD_API_PREFIX = "http://api.treasuredata.com/v3/";
+    public static final String JOB_STATUS_SUCCESS = "success";
     private final HttpClient httpClient;
 
     /**
@@ -107,9 +110,16 @@ public class TdjobClient
 
             FullJsonResponseHandler.JsonResponse<TdjobTable> execute = httpClient.execute(request,
                     FullJsonResponseHandler.createFullJsonResponseHandler(JsonCodec.jsonCodec(TdjobTable.class)));
-            TdjobTable table = execute.getValue();
-            tables.put(tableName, table);
-            return table;
+            try {
+                TdjobTable table = execute.getValue();
+                if (JOB_STATUS_SUCCESS.equals(table.getStatus())) {
+                    tables.put(tableName, table);
+                    return table;
+                }
+            }
+            catch (IllegalStateException e) {
+            }
+            return null;
         }
     }
 
@@ -154,7 +164,14 @@ public class TdjobClient
         ConcurrentMap<String, TdjobTable> tables = new MapMaker()
                 .makeMap();
 
-        tables.putAll(Maps.uniqueIndex(jobs.getJobs(), nameGetter()));
+        List<TdjobTable> filtered = Lists.newArrayList();
+        for (TdjobTable job : jobs.getJobs()) {
+            if (JOB_STATUS_SUCCESS.equals(job.getStatus())) {
+                filtered.add(job);
+            }
+        }
+
+        tables.putAll(Maps.uniqueIndex(filtered, nameGetter()));
         return tables;
     }
 
