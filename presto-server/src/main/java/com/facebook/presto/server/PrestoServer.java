@@ -16,11 +16,16 @@ package com.facebook.presto.server;
 import com.facebook.presto.discovery.EmbeddedDiscoveryModule;
 import com.facebook.presto.metadata.CatalogManager;
 import com.google.common.collect.ImmutableList;
+import com.google.inject.Binder;
 import com.google.inject.Injector;
+import com.google.inject.Key;
 import com.google.inject.Module;
+import com.google.inject.Scopes;
+import com.google.inject.multibindings.Multibinder;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryModule;
+import io.airlift.event.client.EventClient;
 import io.airlift.event.client.HttpEventModule;
 import io.airlift.event.client.JsonEventModule;
 import io.airlift.floatingdecimal.FloatingDecimal;
@@ -68,7 +73,17 @@ public class PrestoServer
                 new JsonEventModule(),
                 new HttpEventModule(),
                 new EmbeddedDiscoveryModule(),
-                new ServerMainModule());
+                new ServerMainModule(),
+                new Module()
+                {
+                    @Override
+                    public void configure(Binder binder)
+                    {
+                        Multibinder.newSetBinder(binder, EventClient.class).addBinding().to(
+                                Key.get(QueryEventClient.class)).in(Scopes.SINGLETON);
+                    }
+                }
+        );
 
         modules.addAll(getAdditionalModules());
 
