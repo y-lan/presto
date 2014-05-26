@@ -24,14 +24,16 @@ import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.metadata.QualifiedTablePrefix;
 import com.facebook.presto.metadata.TableHandle;
+import com.facebook.presto.raptor.RaptorPlugin;
 import com.facebook.presto.server.testing.TestingPrestoServer;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.tpch.SampledTpchPlugin;
+import com.facebook.presto.sql.tree.QualifiedName;
+import com.facebook.presto.testing.MaterializedResult;
+import com.facebook.presto.testing.MaterializedRow;
 import com.facebook.presto.tpch.TpchMetadata;
 import com.facebook.presto.tpch.TpchPlugin;
-import com.facebook.presto.util.MaterializedResult;
-import com.facebook.presto.util.MaterializedRow;
+import com.facebook.presto.tpch.testing.SampledTpchPlugin;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
@@ -49,6 +51,7 @@ import io.airlift.units.Duration;
 import org.intellij.lang.annotations.Language;
 import org.testng.annotations.Test;
 
+import java.io.File;
 import java.net.URI;
 import java.sql.Date;
 import java.sql.Time;
@@ -61,6 +64,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.facebook.presto.connector.informationSchema.InformationSchemaMetadata.INFORMATION_SCHEMA;
+import static com.facebook.presto.metadata.MetadataUtil.createQualifiedTableName;
 import static com.facebook.presto.server.testing.TestingPrestoServer.TEST_CATALOG;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
@@ -73,12 +77,12 @@ import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.testing.MaterializedResult.DEFAULT_PRECISION;
 import static com.facebook.presto.util.DateTimeUtils.parseDate;
 import static com.facebook.presto.util.DateTimeUtils.parseTime;
 import static com.facebook.presto.util.DateTimeUtils.parseTimeWithTimeZone;
 import static com.facebook.presto.util.DateTimeUtils.parseTimestamp;
 import static com.facebook.presto.util.DateTimeUtils.parseTimestampWithTimeZone;
-import static com.facebook.presto.util.MaterializedResult.DEFAULT_PRECISION;
 import static com.facebook.presto.util.Types.checkType;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.Iterables.transform;
@@ -90,6 +94,7 @@ import static java.util.Collections.nCopies;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
 public class TestDistributedQueries
@@ -218,23 +223,19 @@ public class TestDistributedQueries
     private void assertCreateTable(String table, @Language("SQL") String query, @Language("SQL") String expectedQuery, @Language("SQL") String rowCountQuery)
            throws Exception
     {
-        try {
-            assertQuery("CREATE TABLE " +  table + " AS " + query, rowCountQuery);
-            assertQuery("SELECT * FROM " + table, expectedQuery);
-        }
-        finally {
-            QualifiedTableName name = new QualifiedTableName(TEST_CATALOG, "test", table);
-            Optional<TableHandle> handle = coordinator.getMetadata().getTableHandle(SESSION, name);
-            if (handle.isPresent()) {
-                coordinator.getMetadata().dropTable(handle.get());
-            }
-        }
+        assertQuery("CREATE TABLE " + table + " AS " + query, rowCountQuery);
+        assertQuery("SELECT * FROM " + table, expectedQuery);
+        assertQueryTrue("DROP TABLE " + table);
+
+        QualifiedTableName name = createQualifiedTableName(SESSION, QualifiedName.of(table));
+        Optional<TableHandle> handle = coordinator.getMetadata().getTableHandle(SESSION, name);
+        assertFalse(handle.isPresent());
     }
 
     @Override
     protected int getNodeCount()
     {
-        return 3;
+        return 4;
     }
 
     @Override
@@ -246,6 +247,7 @@ public class TestDistributedQueries
             coordinator = createTestingPrestoServer(discoveryServer.getBaseUrl(), true);
             servers = ImmutableList.<TestingPrestoServer>builder()
                     .add(coordinator)
+                    .add(createTestingPrestoServer(discoveryServer.getBaseUrl(), false))
                     .add(createTestingPrestoServer(discoveryServer.getBaseUrl(), false))
                     .add(createTestingPrestoServer(discoveryServer.getBaseUrl(), false))
                     .build();
@@ -474,15 +476,35 @@ public class TestDistributedQueries
     private static TestingPrestoServer createTestingPrestoServer(URI discoveryUri, boolean coordinator)
             throws Exception
     {
-        Map<String, String> properties = ImmutableMap.<String, String>builder()
+        ImmutableMap.Builder<String, String> properties = ImmutableMap.<String, String>builder()
                 .put("query.client.timeout", "10m")
                 .put("exchange.http-client.read-timeout", "1h")
-                .put("datasources", "native,tpch,tpch_sampled")
+                .put("datasources", "default,tpch,tpch_sampled");
+        if (coordinator) {
+            properties.put("node-scheduler.include-coordinator", "false");
+        }
+
+        TestingPrestoServer server = new TestingPrestoServer(coordinator, properties.build(), ENVIRONMENT, discoveryUri, ImmutableList.<Module>of());
+
+        // install tpch plugins
+        server.installPlugin(new TpchPlugin());
+        server.createConnection("tpch", "tpch");
+
+        server.installPlugin(new SampledTpchPlugin());
+        server.createConnection("tpch_sampled", "tpch_sampled");
+
+        // install raptor plugin
+        File baseDir = server.getBaseDataDir().toFile();
+
+        Map<String, String> raptorProperties = ImmutableMap.<String, String>builder()
+                .put("metadata.db.type", "h2")
+                .put("metadata.db.filename", new File(baseDir, "db").getAbsolutePath())
+                .put("storage.data-directory", new File(baseDir, "data").getAbsolutePath())
                 .build();
 
-        TestingPrestoServer server = new TestingPrestoServer(coordinator, properties, ENVIRONMENT, discoveryUri, ImmutableList.<Module>of());
-        server.installPlugin(new TpchPlugin(), "tpch", "tpch");
-        server.installPlugin(new SampledTpchPlugin(), "tpch_sampled", "tpch_sampled");
+        server.installPlugin(new RaptorPlugin());
+        server.createConnection("default", "raptor", raptorProperties);
+
         return server;
     }
 }

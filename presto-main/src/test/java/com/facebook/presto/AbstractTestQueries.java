@@ -20,8 +20,8 @@ import com.facebook.presto.operator.scalar.CreateHll;
 import com.facebook.presto.operator.scalar.CustomAdd;
 import com.facebook.presto.operator.window.CustomRank;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.util.MaterializedResult;
-import com.facebook.presto.util.MaterializedRow;
+import com.facebook.presto.testing.MaterializedResult;
+import com.facebook.presto.testing.MaterializedRow;
 import com.google.common.base.Function;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -47,7 +47,7 @@ import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.tree.ExplainType.Type.DISTRIBUTED;
 import static com.facebook.presto.sql.tree.ExplainType.Type.LOGICAL;
-import static com.facebook.presto.util.MaterializedResult.resultBuilder;
+import static com.facebook.presto.testing.MaterializedResult.resultBuilder;
 import static com.google.common.collect.Iterables.transform;
 import static io.airlift.tpch.TpchTable.ORDERS;
 import static io.airlift.tpch.TpchTable.tableNameGetter;
@@ -1984,7 +1984,7 @@ public abstract class AbstractTestQueries
     public void testWithRecursive()
             throws Exception
     {
-        computeActual("WITH RECURSIVE a AS (SELECT 123 FROM dual) SELECT * FROM a");
+        computeActual("WITH RECURSIVE a AS (SELECT 123) SELECT * FROM a");
     }
 
     @Test
@@ -2109,18 +2109,9 @@ public abstract class AbstractTestQueries
     }
 
     @Test
-    public void testDual()
-            throws Exception
-    {
-        MaterializedResult result = computeActual("SELECT * FROM dual");
-        List<MaterializedRow> rows = result.getMaterializedRows();
-        assertEquals(rows.size(), 1);
-    }
-
-    @Test
     public void testDefaultExplainTextFormat()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getExplainPlan(query, LOGICAL));
@@ -2129,7 +2120,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testDefaultExplainGraphvizFormat()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (FORMAT GRAPHVIZ) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getGraphvizExplainPlan(query, LOGICAL));
@@ -2138,7 +2129,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testLogicalExplain()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (TYPE LOGICAL) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getExplainPlan(query, LOGICAL));
@@ -2147,7 +2138,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testLogicalExplainTextFormat()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (TYPE LOGICAL, FORMAT TEXT) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getExplainPlan(query, LOGICAL));
@@ -2156,7 +2147,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testLogicalExplainGraphvizFormat()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (TYPE LOGICAL, FORMAT GRAPHVIZ) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getGraphvizExplainPlan(query, LOGICAL));
@@ -2165,7 +2156,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testDistributedExplain()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (TYPE DISTRIBUTED) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getExplainPlan(query, DISTRIBUTED));
@@ -2174,7 +2165,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testDistributedExplainTextFormat()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (TYPE DISTRIBUTED, FORMAT TEXT) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getExplainPlan(query, DISTRIBUTED));
@@ -2183,7 +2174,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testDistributedExplainGraphvizFormat()
     {
-        String query = "SELECT 123 FROM dual";
+        String query = "SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN (TYPE DISTRIBUTED, FORMAT GRAPHVIZ) " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getGraphvizExplainPlan(query, DISTRIBUTED));
@@ -2192,7 +2183,7 @@ public abstract class AbstractTestQueries
     @Test
     public void testExplainOfExplain()
     {
-        String query = "EXPLAIN SELECT 123 FROM dual";
+        String query = "EXPLAIN SELECT 123";
         MaterializedResult result = computeActual("EXPLAIN " + query);
         String actual = Iterables.getOnlyElement(transform(result.getMaterializedRows(), onlyColumnGetter()));
         assertEquals(actual, getExplainPlan(query, LOGICAL));
@@ -2856,7 +2847,7 @@ public abstract class AbstractTestQueries
     public void testTrivialNonDeterministicPredicatePushdown()
             throws Exception
     {
-        assertQuery("SELECT COUNT(*) FROM dual WHERE rand() >= 0");
+        assertQuery("SELECT COUNT(*) WHERE rand() >= 0");
     }
 
     @Test
@@ -2980,7 +2971,7 @@ public abstract class AbstractTestQueries
         assertTrue(stats.getVariance() > 0, "Samples all had the exact same size");
     }
 
-    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\QUnexpected parameters (bigint) for function length. Expected: length(varchar)\\E")
+    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\QUnexpected parameters (bigint) for function length. Expected:\\E.*")
     public void testFunctionNotRegistered()
     {
         computeActual("SELECT length(1)");

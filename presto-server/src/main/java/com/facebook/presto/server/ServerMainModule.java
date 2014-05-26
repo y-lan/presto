@@ -19,8 +19,6 @@ import com.facebook.presto.block.rle.RunLengthBlockEncoding;
 import com.facebook.presto.block.snappy.SnappyBlockEncoding;
 import com.facebook.presto.client.QueryResults;
 import com.facebook.presto.connector.ConnectorManager;
-import com.facebook.presto.connector.NativeConnectorFactory;
-import com.facebook.presto.connector.dual.DualModule;
 import com.facebook.presto.connector.informationSchema.InformationSchemaModule;
 import com.facebook.presto.connector.jmx.JmxConnectorFactory;
 import com.facebook.presto.connector.system.SystemTablesModule;
@@ -42,18 +40,10 @@ import com.facebook.presto.guice.AbstractConfigurationAwareModule;
 import com.facebook.presto.index.IndexManager;
 import com.facebook.presto.metadata.CatalogManager;
 import com.facebook.presto.metadata.CatalogManagerConfig;
-import com.facebook.presto.metadata.ColumnMetadataMapper;
-import com.facebook.presto.metadata.DatabaseLocalStorageManager;
-import com.facebook.presto.metadata.DatabaseLocalStorageManagerConfig;
-import com.facebook.presto.metadata.ForLocalStorageManager;
-import com.facebook.presto.metadata.ForMetadata;
-import com.facebook.presto.metadata.ForShardManager;
 import com.facebook.presto.metadata.HandleJsonModule;
-import com.facebook.presto.metadata.LocalStorageManager;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.MetadataManager;
 import com.facebook.presto.metadata.NodeVersion;
-import com.facebook.presto.metadata.TableColumnMapper;
 import com.facebook.presto.operator.ExchangeClient;
 import com.facebook.presto.operator.ExchangeClientConfig;
 import com.facebook.presto.operator.ExchangeClientFactory;
@@ -79,20 +69,20 @@ import com.facebook.presto.spi.type.TimestampType;
 import com.facebook.presto.spi.type.TimestampWithTimeZoneType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.type.VarbinaryType;
 import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.split.ConnectorDataStreamProvider;
 import com.facebook.presto.split.DataStreamManager;
 import com.facebook.presto.split.DataStreamProvider;
-import com.facebook.presto.split.NativePartitionKey;
+import com.facebook.presto.sql.Serialization.ExpressionDeserializer;
+import com.facebook.presto.sql.Serialization.ExpressionSerializer;
+import com.facebook.presto.sql.Serialization.FunctionCallDeserializer;
 import com.facebook.presto.sql.gen.ExpressionCompiler;
 import com.facebook.presto.sql.planner.LocalExecutionPlanner;
 import com.facebook.presto.sql.planner.PlanOptimizersFactory;
 import com.facebook.presto.sql.planner.optimizations.PlanOptimizer;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.FunctionCall;
-import com.facebook.presto.sql.Serialization.ExpressionDeserializer;
-import com.facebook.presto.sql.Serialization.ExpressionSerializer;
-import com.facebook.presto.sql.Serialization.FunctionCallDeserializer;
 import com.facebook.presto.type.ColorType;
 import com.facebook.presto.type.TypeDeserializer;
 import com.facebook.presto.type.TypeRegistry;
@@ -105,29 +95,17 @@ import com.google.inject.Scopes;
 import com.google.inject.TypeLiteral;
 import com.google.inject.multibindings.MapBinder;
 import com.google.inject.multibindings.Multibinder;
-import io.airlift.dbpool.H2EmbeddedDataSource;
-import io.airlift.dbpool.H2EmbeddedDataSourceConfig;
-import io.airlift.dbpool.H2EmbeddedDataSourceModule;
-import io.airlift.dbpool.MySqlDataSourceModule;
-import io.airlift.discovery.client.ServiceAnnouncement.ServiceAnnouncementBuilder;
 import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.slice.Slice;
-import io.airlift.units.Duration;
-import org.skife.jdbi.v2.DBI;
-import org.skife.jdbi.v2.IDBI;
-import org.skife.jdbi.v2.tweak.ResultSetMapper;
 
 import javax.inject.Singleton;
 
-import java.io.File;
-import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 
-import static com.facebook.presto.guice.ConditionalModule.installIfPropertyEquals;
-import static com.facebook.presto.guice.DbiProvider.bindDbiToDataSource;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Strings.nullToEmpty;
 import static com.google.inject.multibindings.MapBinder.newMapBinder;
 import static com.google.inject.multibindings.Multibinder.newSetBinder;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
@@ -138,7 +116,6 @@ import static io.airlift.http.client.HttpClientBinder.httpClientBinder;
 import static io.airlift.json.JsonBinder.jsonBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
-import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.weakref.jmx.guice.ExportBinder.newExporter;
 
 public class ServerMainModule
@@ -150,7 +127,7 @@ public class ServerMainModule
         ServerConfig serverConfig = buildConfigObject(ServerConfig.class);
 
         // TODO: this should only be installed if this is a coordinator
-        install(new CoordinatorModule());
+        binder.install(new CoordinatorModule());
 
         if (serverConfig.isCoordinator()) {
             discoveryBinder(binder).bindHttpAnnouncement("presto-coordinator");
@@ -181,11 +158,6 @@ public class ServerMainModule
         binder.bind(LocationFactory.class).to(HttpLocationFactory.class).in(Scopes.SINGLETON);
         binder.bind(RemoteTaskFactory.class).to(HttpRemoteTaskFactory.class).in(Scopes.SINGLETON);
         httpClientBinder(binder).bindAsyncHttpClient("scheduler", ForScheduler.class).withTracing();
-
-        // local storage manager
-        bindConfig(binder).to(DatabaseLocalStorageManagerConfig.class);
-        binder.bind(LocalStorageManager.class).to(DatabaseLocalStorageManager.class).in(Scopes.SINGLETON);
-        newExporter(binder).export(LocalStorageManager.class).withGeneratedName();
 
         // data stream provider
         binder.bind(DataStreamManager.class).in(Scopes.SINGLETON);
@@ -219,14 +191,8 @@ public class ServerMainModule
         binder.bind(ConnectorManager.class).in(Scopes.SINGLETON);
         MapBinder<String, ConnectorFactory> connectorFactoryBinder = newMapBinder(binder, String.class, ConnectorFactory.class);
 
-        // native
-        connectorFactoryBinder.addBinding("native").to(NativeConnectorFactory.class);
-
         // jmx connector
         connectorFactoryBinder.addBinding("jmx").to(JmxConnectorFactory.class);
-
-        // dual
-        binder.install(new DualModule());
 
         // information schema
         binder.install(new InformationSchemaModule());
@@ -260,18 +226,9 @@ public class ServerMainModule
         binder.bind(NodeVersion.class).toInstance(nodeVersion);
 
         // presto announcement
-        ServiceAnnouncementBuilder prestoAnnouncement = discoveryBinder(binder).bindHttpAnnouncement("presto")
-                .addProperty("node_version", nodeVersion.toString());
-
-        if (serverConfig.getDataSources() != null) {
-            prestoAnnouncement.addProperty("datasources", serverConfig.getDataSources());
-        }
-
-        bindDataSource(binder, "presto-metastore", ForMetadata.class, ForShardManager.class);
-        Multibinder<ResultSetMapper<?>> resultSetMapperBinder = newSetBinder(binder, new TypeLiteral<ResultSetMapper<?>>() {}, ForMetadata.class);
-        resultSetMapperBinder.addBinding().to(TableColumnMapper.class).in(Scopes.SINGLETON);
-        resultSetMapperBinder.addBinding().to(ColumnMetadataMapper.class).in(Scopes.SINGLETON);
-        resultSetMapperBinder.addBinding().to(NativePartitionKey.Mapper.class).in(Scopes.SINGLETON);
+        discoveryBinder(binder).bindHttpAnnouncement("presto")
+                .addProperty("node_version", nodeVersion.toString())
+                .addProperty("datasources", nullToEmpty(serverConfig.getDataSources()));
 
         // statement resource
         jsonCodecBinder(binder).bindJsonCodec(QueryInfo.class);
@@ -299,6 +256,7 @@ public class ServerMainModule
         blockEncodingFactoryBinder.addBinding().toInstance(BigintType.BLOCK_ENCODING_FACTORY);
         blockEncodingFactoryBinder.addBinding().toInstance(DoubleType.BLOCK_ENCODING_FACTORY);
         blockEncodingFactoryBinder.addBinding().toInstance(VarcharType.BLOCK_ENCODING_FACTORY);
+        blockEncodingFactoryBinder.addBinding().toInstance(VarbinaryType.BLOCK_ENCODING_FACTORY);
         blockEncodingFactoryBinder.addBinding().toInstance(DateType.BLOCK_ENCODING_FACTORY);
         blockEncodingFactoryBinder.addBinding().toInstance(TimeType.BLOCK_ENCODING_FACTORY);
         blockEncodingFactoryBinder.addBinding().toInstance(TimeWithTimeZoneType.BLOCK_ENCODING_FACTORY);
@@ -322,31 +280,6 @@ public class ServerMainModule
     public ScheduledExecutorService createExchangeExecutor()
     {
         return newScheduledThreadPool(4, daemonThreadsNamed("exchange-client-%s"));
-    }
-
-    @Provides
-    @Singleton
-    @ForLocalStorageManager
-    public IDBI createLocalStorageManagerDBI(DatabaseLocalStorageManagerConfig config)
-            throws Exception
-    {
-        return new DBI(new H2EmbeddedDataSource(new H2EmbeddedDataSourceConfig()
-                .setFilename(new File(config.getDataDirectory(), "db/StorageManager").getAbsolutePath())
-                .setMaxConnections(500)
-                .setMaxConnectionWait(new Duration(1, SECONDS))));
-    }
-
-    @SafeVarargs
-    private final void bindDataSource(Binder binder, String type, Class<? extends Annotation> annotation, Class<? extends Annotation>... aliases)
-    {
-        String property = type + ".db.type";
-        install(installIfPropertyEquals(new MySqlDataSourceModule(type, annotation, aliases), property, "mysql"));
-        install(installIfPropertyEquals(new H2EmbeddedDataSourceModule(type, annotation, aliases), property, "h2"));
-
-        bindDbiToDataSource(binder, annotation);
-        for (Class<? extends Annotation> alias : aliases) {
-            bindDbiToDataSource(binder, alias);
-        }
     }
 
     private static String detectPrestoVersion()

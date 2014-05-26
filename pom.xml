@@ -10,7 +10,7 @@
 
     <groupId>com.facebook.presto</groupId>
     <artifactId>presto-root</artifactId>
-    <version>0.69-SNAPSHOT</version>
+    <version>0.70-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>presto-root</name>
@@ -62,9 +62,12 @@
         <module>presto-tpch</module>
         <module>presto-jdbc-plugin</module>
         <module>presto-td-job</module>
+        <module>presto-raptor</module>
         <module>presto-client</module>
         <module>presto-parser</module>
         <module>presto-main</module>
+        <module>presto-ml</module>
+        <module>presto-benchmark</module>
         <module>presto-jdbc</module>
         <module>presto-cli</module>
         <module>presto-server</module>
@@ -130,6 +133,12 @@
             <dependency>
                 <groupId>com.facebook.presto</groupId>
                 <artifactId>presto-tpch</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.facebook.presto</groupId>
+                <artifactId>presto-raptor</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
@@ -380,6 +389,12 @@
                 <groupId>org.jruby.joni</groupId>
                 <artifactId>joni</artifactId>
                 <version>2.0.0</version>
+            </dependency>
+
+            <dependency>
+                <groupId>tw.edu.ntu.csie</groupId>
+                <artifactId>libsvm</artifactId>
+                <version>3.17</version>
             </dependency>
 
             <dependency>

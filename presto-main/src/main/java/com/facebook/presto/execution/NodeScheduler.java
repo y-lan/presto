@@ -17,6 +17,7 @@ import com.facebook.presto.metadata.Split;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.Node;
 import com.facebook.presto.spi.NodeManager;
+import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.AbstractIterator;
@@ -61,6 +62,7 @@ public class NodeScheduler
     private final int minCandidates;
     private final String rackTopologyScript;
     private final boolean locationAwareScheduling;
+    private final boolean includeCoordinator;
 
     @Inject
     public NodeScheduler(NodeManager nodeManager, NodeSchedulerConfig config)
@@ -69,6 +71,7 @@ public class NodeScheduler
         this.minCandidates = config.getMinCandidates();
         this.rackTopologyScript = config.getRackTopologyScript();
         this.locationAwareScheduling = config.isLocationAwareSchedulingEnabled();
+        this.includeCoordinator = config.isIncludeCoordinator();
     }
 
     @Managed
@@ -115,7 +118,15 @@ public class NodeScheduler
                     nodes = nodeManager.getActiveDatasourceNodes(dataSourceName);
                 }
                 else {
-                    nodes = nodeManager.getActiveNodes();
+                    nodes = FluentIterable.from(nodeManager.getActiveNodes()).filter(new Predicate<Node>() {
+                        @Override
+                        public boolean apply(Node node)
+                        {
+                            // TODO: This only filters out the coordinator if it's the current node, which does not work if we have multiple coordinators.
+                            // Instead we should have the coordinator announce that it's a coordinator in service discovery.
+                            return includeCoordinator || !nodeManager.getCurrentNode().getNodeIdentifier().equals(node.getNodeIdentifier());
+                        }
+                    }).toSet();
                 }
 
                 for (Node node : nodes) {

@@ -101,6 +101,8 @@ floating point numbers. This is important because many Hive file formats
 store floating point values as text. Change the path
 ``/var/presto/installation`` to match the Presto installation directory.
 
+.. _config_properties:
+
 Config Properties
 ^^^^^^^^^^^^^^^^^
 
@@ -115,10 +117,8 @@ The following is a minimal configuration for the coordinator:
 .. code-block:: none
 
     coordinator=true
-    datasources=jmx
+    node-scheduler.include-coordinator=false
     http-server.http.port=8080
-    presto-metastore.db.type=h2
-    presto-metastore.db.filename=var/db/MetaStore
     task.max-memory=1GB
     discovery-server.enabled=true
     discovery.uri=http://example.net:8080
@@ -128,33 +128,26 @@ And this is a minimal configuration for the workers:
 .. code-block:: none
 
     coordinator=false
-    datasources=jmx,hive
     http-server.http.port=8080
-    presto-metastore.db.type=h2
-    presto-metastore.db.filename=var/db/MetaStore
     task.max-memory=1GB
     discovery.uri=http://example.net:8080
 
 These properties require some explanation:
 
-* ``datasources``:
-  Specifies the list of catalog names that may have splits processed
-  on this node. Both the coordinator and workers have ``jmx`` enabled
-  because the JMX catalog enables querying JMX properties from all nodes.
-  However, only the workers have ``hive`` enabled, because we do not want
-  to process Hive splits on the coordinator, as this can interfere with
-  query coordination and slow down everything.
+* ``coordinator``:
+  Allow this Presto instance to function as a coordinator
+  (accept queries from clients and manage query execution).
+
+* ``node-scheduler.include-coordinator``:
+  Allow scheduling work on the coordinator.
+  For larger clusters, processing work on the coordinator
+  can impact query performance because the machine's resources are not
+  available for the critical task of scheduling, managing and monitoring
+  query execution.
 
 * ``http-server.http.port``:
   Specifies the port for the HTTP server. Presto uses HTTP for all
   communication, internal and external.
-
-* ``presto-metastore.db.filename``:
-  The location of the local H2 database used for storing metadata.
-  Currently, this is mainly used by features that are still in
-  development and thus a local database suffices.
-  Also, this should only be needed by the coordinator, but currently
-  it is also required for workers.
 
 * ``task.max-memory=1GB``:
   The maximum amount of memory used by a single task
