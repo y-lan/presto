@@ -51,17 +51,20 @@ import com.facebook.presto.operator.SourceOperatorFactory;
 import com.facebook.presto.operator.TableScanOperator.TableScanOperatorFactory;
 import com.facebook.presto.operator.TopNOperator.TopNOperatorFactory;
 import com.facebook.presto.operator.ValuesOperator.ValuesOperatorFactory;
+import com.facebook.presto.operator.WindowFunctionDefinition;
 import com.facebook.presto.operator.WindowOperator.WindowOperatorFactory;
+import com.facebook.presto.operator.index.FieldSetFilteringRecordSet;
 import com.facebook.presto.operator.index.IndexLookupSourceSupplier;
 import com.facebook.presto.operator.index.IndexSourceOperator;
-import com.facebook.presto.operator.window.WindowFunction;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.Index;
+import com.facebook.presto.spi.RecordSet;
 import com.facebook.presto.spi.RecordSink;
 import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.DataStreamProvider;
+import com.facebook.presto.split.MappedRecordSet;
 import com.facebook.presto.sql.gen.ExpressionCompiler;
 import com.facebook.presto.sql.planner.optimizations.IndexJoinOptimizer;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
@@ -160,6 +163,7 @@ public class LocalExecutionPlanner
     private final RecordSinkManager recordSinkManager;
     private final Supplier<ExchangeClient> exchangeClientSupplier;
     private final ExpressionCompiler compiler;
+    private final boolean interpreterEnabled;
 
     @Inject
     public LocalExecutionPlanner(NodeInfo nodeInfo,
@@ -168,8 +172,10 @@ public class LocalExecutionPlanner
             IndexManager indexManager,
             RecordSinkManager recordSinkManager,
             Supplier<ExchangeClient> exchangeClientSupplier,
-            ExpressionCompiler compiler)
+            ExpressionCompiler compiler,
+            CompilerConfig config)
     {
+        checkNotNull(config, "config is null");
         this.nodeInfo = checkNotNull(nodeInfo, "nodeInfo is null");
         this.dataStreamProvider = dataStreamProvider;
         this.indexManager = checkNotNull(indexManager, "indexManager is null");
@@ -177,6 +183,8 @@ public class LocalExecutionPlanner
         this.metadata = checkNotNull(metadata, "metadata is null");
         this.recordSinkManager = checkNotNull(recordSinkManager, "recordSinkManager is null");
         this.compiler = checkNotNull(compiler, "compiler is null");
+
+        interpreterEnabled = config.isInterpreterEnabled();
     }
 
     public LocalExecutionPlan plan(ConnectorSession session,
@@ -385,12 +393,17 @@ public class LocalExecutionPlanner
                 outputChannels.add(i);
             }
 
-            ImmutableList.Builder<WindowFunction> windowFunctions = ImmutableList.builder();
+            ImmutableList.Builder<WindowFunctionDefinition> windowFunctions = ImmutableList.builder();
             List<Symbol> windowFunctionOutputSymbols = new ArrayList<>();
             for (Map.Entry<Symbol, FunctionCall> entry : node.getWindowFunctions().entrySet()) {
+                ImmutableList.Builder<Input> arguments = ImmutableList.builder();
+                for (Expression argument : entry.getValue().getArguments()) {
+                    Symbol argumentSymbol = Symbol.fromQualifiedName(((QualifiedNameReference) argument).getName());
+                    arguments.add(source.getLayout().get(argumentSymbol));
+                }
                 Symbol symbol = entry.getKey();
                 Signature signature = node.getSignatures().get(symbol);
-                windowFunctions.add(metadata.getExactFunction(signature).getWindowFunction().get());
+                windowFunctions.add(metadata.getExactFunction(signature).bindWindowFunction(arguments.build()));
                 windowFunctionOutputSymbols.add(symbol);
             }
 
@@ -705,6 +718,10 @@ public class LocalExecutionPlanner
                 }
             }
             catch (RuntimeException e) {
+                if (!interpreterEnabled) {
+                    throw e;
+                }
+
                 // compilation failed, use interpreter
                 log.error(e, "Compile failed for filter=%s projections=%s sourceTypes=%s error=%s", filterExpression, projectionExpressions, sourceTypes, e);
             }
@@ -835,13 +852,33 @@ public class LocalExecutionPlanner
             List<Symbol> lookupSymbolSchema = ImmutableList.copyOf(node.getLookupSymbols());
 
             // Identify how to remap the probe key Input to match the source index lookup layout
-            List<Integer> remappedProbeKeyChannels = new ArrayList<>();
+            ImmutableList.Builder<Integer> remappedProbeKeyChannelsBuilder = ImmutableList.builder();
+            // Identify overlapping fields that can produce the same lookup symbol.
+            // We will filter incoming keys to ensure that overlapping fields will have the same value.
+            ImmutableList.Builder<Set<Integer>> overlappingFieldSetsBuilder = ImmutableList.builder();
             for (Symbol lookupSymbol : lookupSymbolSchema) {
-                // TODO: add additional optimization when there are multiple mappings for one lookup symbol (e.g. index key filtering)
-                // Currently just pick the first field that can supply this symbol
-                Input probeInput = Iterables.getFirst(indexLookupToProbeInput.get(lookupSymbol), null);
-                remappedProbeKeyChannels.add(probeInput.getChannel());
+                Set<Input> potentialProbeInputs = indexLookupToProbeInput.get(lookupSymbol);
+                checkState(!potentialProbeInputs.isEmpty(), "Must have at least one source from the probe input");
+                if (potentialProbeInputs.size() > 1) {
+                    overlappingFieldSetsBuilder.add(FluentIterable.from(potentialProbeInputs)
+                            .transform(Input.channelGetter())
+                            .toSet());
+                }
+                remappedProbeKeyChannelsBuilder.add(Iterables.getFirst(potentialProbeInputs, null).getChannel());
             }
+            final List<Set<Integer>> overlappingFieldSets = overlappingFieldSetsBuilder.build();
+            final List<Integer> remappedProbeKeyChannels = remappedProbeKeyChannelsBuilder.build();
+            Function<RecordSet, RecordSet> probeKeyNormalizer = new Function<RecordSet, RecordSet>()
+            {
+                @Override
+                public RecordSet apply(RecordSet recordSet)
+                {
+                    if (!overlappingFieldSets.isEmpty()) {
+                        recordSet = new FieldSetFilteringRecordSet(recordSet, overlappingFieldSets);
+                    }
+                    return new MappedRecordSet(recordSet, remappedProbeKeyChannels);
+                }
+            };
 
             // Declare the input and output schemas for the index and acquire the actual Index
             List<ColumnHandle> lookupSchema = Lists.transform(lookupSymbolSchema, Functions.forMap(node.getAssignments()));
@@ -849,7 +886,7 @@ public class LocalExecutionPlanner
             Index index = indexManager.getIndex(node.getIndexHandle(), lookupSchema, outputSchema);
 
             List<Type> types = getSourceOperatorTypes(node, context.getTypes());
-            OperatorFactory operatorFactory = new IndexSourceOperator.IndexSourceOperatorFactory(context.getNextOperatorId(), node.getId(), index, types, remappedProbeKeyChannels);
+            OperatorFactory operatorFactory = new IndexSourceOperator.IndexSourceOperatorFactory(context.getNextOperatorId(), node.getId(), index, types, probeKeyNormalizer);
             return new PhysicalOperation(operatorFactory, outputMappings.build());
         }
 

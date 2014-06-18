@@ -5,12 +5,12 @@
     <parent>
         <groupId>io.airlift</groupId>
         <artifactId>airbase</artifactId>
-        <version>19</version>
+        <version>21</version>
     </parent>
 
     <groupId>com.facebook.presto</groupId>
     <artifactId>presto-root</artifactId>
-    <version>0.70-SNAPSHOT</version>
+    <version>0.71-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>presto-root</name>
@@ -40,7 +40,8 @@
         <air.check.skip-license>false</air.check.skip-license>
 
         <dep.antlr.version>3.4</dep.antlr.version>
-        <dep.airlift.version>0.88</dep.airlift.version>
+        <dep.slice.version>0.6</dep.slice.version>
+        <dep.airlift.version>0.90</dep.airlift.version>
         <dep.packaging.version>${dep.airlift.version}</dep.packaging.version>
 
         <cli.skip-execute>true</cli.skip-execute>
@@ -68,10 +69,12 @@
         <module>presto-main</module>
         <module>presto-ml</module>
         <module>presto-benchmark</module>
+        <module>presto-tests</module>
         <module>presto-jdbc</module>
         <module>presto-cli</module>
         <module>presto-server</module>
         <module>presto-docs</module>
+        <module>presto-verifier</module>
     </modules>
 
     <dependencyManagement>
@@ -188,9 +191,8 @@
 
             <dependency>
                 <groupId>com.facebook.presto</groupId>
-                <artifactId>presto-server</artifactId>
+                <artifactId>presto-tests</artifactId>
                 <version>${project.version}</version>
-                <type>test-jar</type>
             </dependency>
 
             <dependency>
@@ -214,7 +216,7 @@
             <dependency>
                 <groupId>com.facebook.presto.hive</groupId>
                 <artifactId>hive-apache</artifactId>
-                <version>0.5</version>
+                <version>0.8</version>
             </dependency>
 
             <dependency>
@@ -334,7 +336,7 @@
             <dependency>
                 <groupId>io.airlift.tpch</groupId>
                 <artifactId>tpch</artifactId>
-                <version>0.1</version>
+                <version>0.2</version>
             </dependency>
 
             <dependency>
@@ -374,6 +376,12 @@
             </dependency>
 
             <dependency>
+                <groupId>org.openjdk.jol</groupId>
+                <artifactId>jol-core</artifactId>
+                <version>0.1</version>
+            </dependency>
+
+            <dependency>
                 <groupId>com.intellij</groupId>
                 <artifactId>annotations</artifactId>
                 <version>9.0.4</version>
@@ -392,9 +400,15 @@
             </dependency>
 
             <dependency>
-                <groupId>tw.edu.ntu.csie</groupId>
+                <groupId>com.facebook.thirdparty</groupId>
                 <artifactId>libsvm</artifactId>
-                <version>3.17</version>
+                <version>3.18.1</version>
+            </dependency>
+
+            <dependency>
+                <groupId>mysql</groupId>
+                <artifactId>mysql-connector-java</artifactId>
+                <version>5.1.25</version>
             </dependency>
 
             <dependency>
@@ -516,6 +530,12 @@
                         <parallel>methods</parallel>
                         <threadCount>4</threadCount>
                         <perCoreThreadCount>true</perCoreThreadCount>
+                        <systemPropertyVariables>
+                            <file.encoding>${project.build.sourceEncoding}</file.encoding>
+                            <sun.jnu.encoding>${project.build.sourceEncoding}</sun.jnu.encoding>
+                            <user.timezone>${test.timezone}</user.timezone>
+                            <java.awt.headless>true</java.awt.headless>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
 
@@ -653,22 +673,14 @@
     </build>
 
     <profiles>
-        <!-- run console for development: mvn -q -P console compile exec:java -->
+        <!-- run cli for development: mvn -am -pl presto-cli -P cli compile exec:java -->
         <profile>
-            <id>console</id>
+            <id>cli</id>
             <build>
                 <plugins>
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>console</id>
-                                <goals>
-                                    <goal>java</goal>
-                                </goals>
-                            </execution>
-                        </executions>
                         <configuration>
                             <skip>${cli.skip-execute}</skip>
                             <executable>${java.home}/bin/java</executable>

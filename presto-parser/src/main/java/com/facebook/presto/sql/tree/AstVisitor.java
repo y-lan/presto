@@ -367,28 +367,43 @@ public abstract class AstVisitor<R, C>
         return visitExpression(node, context);
     }
 
-    public R visitInputReference(InputReference node, C context)
+    protected R visitInputReference(InputReference node, C context)
     {
         return visitExpression(node, context);
     }
 
-    public R visitWindow(Window node, C context)
+    protected R visitWindow(Window node, C context)
     {
         return visitNode(node, context);
     }
 
-    public R visitWindowFrame(WindowFrame node, C context)
+    protected R visitWindowFrame(WindowFrame node, C context)
     {
         return visitNode(node, context);
     }
 
-    public R visitFrameBound(FrameBound node, C context)
+    protected R visitFrameBound(FrameBound node, C context)
     {
         return visitNode(node, context);
     }
 
     protected R visitCreateTable(CreateTable node, C context)
     {
-        return visitNode(node, context);
+        return visitStatement(node, context);
+    }
+
+    protected R visitDropTable(DropTable node, C context)
+    {
+        return visitStatement(node, context);
+    }
+
+    protected R visitCreateView(CreateView node, C context)
+    {
+        return visitStatement(node, context);
+    }
+
+    protected R visitDropView(DropView node, C context)
+    {
+        return visitStatement(node, context);
     }
 }

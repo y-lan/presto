@@ -24,6 +24,7 @@ import com.facebook.presto.sql.tree.Approximate;
 import com.facebook.presto.sql.tree.BooleanLiteral;
 import com.facebook.presto.sql.tree.Cast;
 import com.facebook.presto.sql.tree.CreateTable;
+import com.facebook.presto.sql.tree.CreateView;
 import com.facebook.presto.sql.tree.DefaultTraversalVisitor;
 import com.facebook.presto.sql.tree.Explain;
 import com.facebook.presto.sql.tree.ExplainFormat;
@@ -45,6 +46,7 @@ import com.facebook.presto.sql.tree.ShowSchemas;
 import com.facebook.presto.sql.tree.ShowTables;
 import com.facebook.presto.sql.tree.SingleColumn;
 import com.facebook.presto.sql.tree.SortItem;
+import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.sql.tree.StringLiteral;
 import com.facebook.presto.sql.tree.UseCollection;
 import com.facebook.presto.sql.tree.With;
@@ -202,7 +204,8 @@ class StatementAnalyzer
     {
         QualifiedTableName tableName = MetadataUtil.createQualifiedTableName(session, showColumns.getTable());
 
-        if (!metadata.getTableHandle(session, tableName).isPresent()) {
+        if (!metadata.getView(session, tableName).isPresent() &&
+                !metadata.getTableHandle(session, tableName).isPresent()) {
             throw new SemanticException(MISSING_TABLE, showColumns, "Table '%s' does not exist", tableName);
         }
 
@@ -366,21 +369,36 @@ class StatementAnalyzer
         // analyze the query that creates the table
         TupleDescriptor descriptor = process(node.getQuery(), context);
 
+        validateColumnNames(node, descriptor);
+
+        return new TupleDescriptor(Field.newUnqualified("rows", BIGINT));
+    }
+
+    @Override
+    protected TupleDescriptor visitCreateView(CreateView node, AnalysisContext context)
+    {
+        // analyze the query that creates the view
+        TupleDescriptor descriptor = process(node.getQuery(), context);
+
+        validateColumnNames(node, descriptor);
+
+        return descriptor;
+    }
+
+    private static void validateColumnNames(Statement node, TupleDescriptor descriptor)
+    {
         // verify that all column names are specified and unique
         // TODO: collect errors and return them all at once
         Set<String> names = new HashSet<>();
-        for (int i = 0; i < descriptor.getFields().size(); i++) {
-            Field field = descriptor.getFields().get(i);
+        for (Field field : descriptor.getVisibleFields()) {
             Optional<String> fieldName = field.getName();
             if (!fieldName.isPresent()) {
-                throw new SemanticException(COLUMN_NAME_NOT_SPECIFIED, node, "Column name not specified at position %s", i + 1);
+                throw new SemanticException(COLUMN_NAME_NOT_SPECIFIED, node, "Column name not specified at position %s", descriptor.indexOf(field) + 1);
             }
             if (!names.add(fieldName.get())) {
                 throw new SemanticException(DUPLICATE_COLUMN_NAME, node, "Column name '%s' specified more than once", fieldName.get());
             }
         }
-
-        return new TupleDescriptor(Field.newUnqualified("rows", BIGINT));
     }
 
     @Override
@@ -474,7 +492,7 @@ class StatementAnalyzer
     private List<FieldOrExpression> descriptorToFields(TupleDescriptor tupleDescriptor)
     {
         ImmutableList.Builder<FieldOrExpression> builder = ImmutableList.builder();
-        for (int fieldIndex = 0; fieldIndex < tupleDescriptor.getFields().size(); fieldIndex++) {
+        for (int fieldIndex = 0; fieldIndex < tupleDescriptor.getAllFieldCount(); fieldIndex++) {
             builder.add(new FieldOrExpression(fieldIndex));
         }
         return builder.build();
@@ -524,7 +542,7 @@ class StatementAnalyzer
                     // this is an ordinal in the output tuple
 
                     long ordinal = ((LongLiteral) expression).getValue();
-                    if (ordinal < 1 || ordinal > tupleDescriptor.getFields().size()) {
+                    if (ordinal < 1 || ordinal > tupleDescriptor.getVisibleFieldCount()) {
                         throw new SemanticException(INVALID_ORDINAL, expression, "ORDER BY position %s is not in select list", ordinal);
                     }
 

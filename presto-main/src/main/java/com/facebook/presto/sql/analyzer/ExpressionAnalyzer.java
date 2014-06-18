@@ -15,8 +15,7 @@ package com.facebook.presto.sql.analyzer;
 
 import com.facebook.presto.metadata.FunctionInfo;
 import com.facebook.presto.metadata.Metadata;
-import com.facebook.presto.metadata.OperatorInfo;
-import com.facebook.presto.metadata.OperatorInfo.OperatorType;
+import com.facebook.presto.metadata.OperatorType;
 import com.facebook.presto.metadata.OperatorNotFoundException;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.Type;
@@ -112,7 +111,6 @@ public class ExpressionAnalyzer
     private final ConnectorSession session;
     private final Map<QualifiedName, Integer> resolvedNames = new HashMap<>();
     private final IdentityHashMap<FunctionCall, FunctionInfo> resolvedFunctions = new IdentityHashMap<>();
-    private final IdentityHashMap<Expression, OperatorInfo> resolvedOperators = new IdentityHashMap<>();
     private final IdentityHashMap<Expression, Type> expressionTypes = new IdentityHashMap<>();
     private final IdentityHashMap<Expression, Type> expressionCoercions = new IdentityHashMap<>();
     private final Set<InPredicate> subqueryInPredicates = Collections.newSetFromMap(new IdentityHashMap<InPredicate, Boolean>());
@@ -133,11 +131,6 @@ public class ExpressionAnalyzer
     public IdentityHashMap<FunctionCall, FunctionInfo> getResolvedFunctions()
     {
         return resolvedFunctions;
-    }
-
-    public IdentityHashMap<Expression, OperatorInfo> getResolvedOperators()
-    {
-        return resolvedOperators;
     }
 
     public IdentityHashMap<Expression, Type> getExpressionTypes()
@@ -222,7 +215,7 @@ public class ExpressionAnalyzer
         @Override
         protected Type visitQualifiedNameReference(QualifiedNameReference node, AnalysisContext context)
         {
-            List<Integer> matches = tupleDescriptor.resolveFieldIndexes(node.getName());
+            List<Field> matches = tupleDescriptor.resolveFields(node.getName());
             if (matches.isEmpty()) {
                 throw new SemanticException(MISSING_ATTRIBUTE, node, "Column '%s' cannot be resolved", node.getName());
             }
@@ -230,8 +223,8 @@ public class ExpressionAnalyzer
                 throw new SemanticException(AMBIGUOUS_ATTRIBUTE, node, "Column '%s' is ambiguous", node.getName());
             }
 
-            int fieldIndex = Iterables.getOnlyElement(matches);
-            Field field = tupleDescriptor.getFields().get(fieldIndex);
+            Field field = Iterables.getOnlyElement(matches);
+            int fieldIndex = tupleDescriptor.indexOf(field);
             resolvedNames.put(node.getName(), fieldIndex);
             expressionTypes.put(node, field.getType());
 
@@ -327,6 +320,12 @@ public class ExpressionAnalyzer
                     getCaseResultExpressions(node.getWhenClauses(), node.getDefaultValue()));
             expressionTypes.put(node, type);
 
+            for (WhenClause whenClause : node.getWhenClauses()) {
+                Type whenClauseType = process(whenClause.getResult(), context);
+                checkNotNull(whenClauseType, "Expression types does not contain an entry for %s", whenClause);
+                expressionTypes.put(whenClause, whenClauseType);
+            }
+
             return type;
         }
 
@@ -341,6 +340,12 @@ public class ExpressionAnalyzer
                     "All CASE results must be the same type: %s",
                     getCaseResultExpressions(node.getWhenClauses(), node.getDefaultValue()));
             expressionTypes.put(node, type);
+
+            for (WhenClause whenClause : node.getWhenClauses()) {
+                Type whenClauseType = process(whenClause.getResult(), context);
+                checkNotNull(whenClauseType, "Expression types does not contain an entry for %s", whenClause);
+                expressionTypes.put(whenClause, whenClauseType);
+            }
 
             return type;
         }
@@ -428,8 +433,7 @@ public class ExpressionAnalyzer
             }
 
             try {
-                OperatorInfo operator = metadata.getExactOperator(OperatorType.CAST, type, ImmutableList.of(VARCHAR));
-                resolvedOperators.put(node, operator);
+                metadata.getExactOperator(OperatorType.CAST, type, ImmutableList.of(VARCHAR));
             }
             catch (IllegalArgumentException e) {
                 throw new SemanticException(TYPE_MISMATCH, node, "No literal form for type %s", type);
@@ -510,7 +514,7 @@ public class ExpressionAnalyzer
             for (int i = 0; i < node.getArguments().size(); i++) {
                 Expression expression = node.getArguments().get(i);
                 Type type = function.getArgumentTypes().get(i);
-                coerceType(context, expression, type, String.format("Function %s argument %d", function.getHandle(), i));
+                coerceType(context, expression, type, String.format("Function %s argument %d", function.getSignature(), i));
             }
             resolvedFunctions.put(node, function);
 
@@ -563,8 +567,7 @@ public class ExpressionAnalyzer
             Type value = process(node.getExpression(), context);
             if (value != UNKNOWN) {
                 try {
-                    OperatorInfo operator = metadata.getExactOperator(OperatorType.CAST, type, ImmutableList.of(value));
-                    resolvedOperators.put(node, operator);
+                    metadata.getExactOperator(OperatorType.CAST, type, ImmutableList.of(value));
                 }
                 catch (OperatorNotFoundException e) {
                     throw new SemanticException(TYPE_MISMATCH, node, "Cannot cast %s to %s", value, type);
@@ -615,11 +618,14 @@ public class ExpressionAnalyzer
             TupleDescriptor descriptor = analyzer.process(node.getQuery(), context);
 
             // Scalar subqueries should only produce one column
-            if (descriptor.getFields().size() != 1) {
-                throw new SemanticException(MULTIPLE_FIELDS_FROM_SCALAR_SUBQUERY, node, "Subquery expression must produce only one field. Found %s", descriptor.getFields().size());
+            if (descriptor.getVisibleFieldCount() != 1) {
+                throw new SemanticException(MULTIPLE_FIELDS_FROM_SCALAR_SUBQUERY,
+                        node,
+                        "Subquery expression must produce only one field. Found %s",
+                        descriptor.getVisibleFieldCount());
             }
 
-            Type type = Iterables.getOnlyElement(descriptor.getFields()).getType();
+            Type type = Iterables.getOnlyElement(descriptor.getVisibleFields()).getType();
 
             expressionTypes.put(node, type);
             return type;
@@ -628,7 +634,7 @@ public class ExpressionAnalyzer
         @Override
         public Type visitInputReference(InputReference node, AnalysisContext context)
         {
-            Type type = tupleDescriptor.getFields().get(node.getInput().getChannel()).getType();
+            Type type = tupleDescriptor.getFieldByIndex(node.getInput().getChannel()).getType();
             expressionTypes.put(node, type);
             return type;
         }
@@ -646,7 +652,7 @@ public class ExpressionAnalyzer
                 argumentTypes.add(process(expression, context));
             }
 
-            OperatorInfo operatorInfo;
+            FunctionInfo operatorInfo;
             try {
                 operatorInfo = metadata.resolveOperator(operatorType, argumentTypes.build());
             }
@@ -659,7 +665,6 @@ public class ExpressionAnalyzer
                 Type type = operatorInfo.getArgumentTypes().get(i);
                 coerceType(context, expression, type, String.format("Operator %s argument %d", operatorInfo, i));
             }
-            resolvedOperators.put(node, operatorInfo);
 
             expressionTypes.put(node, operatorInfo.getReturnType());
 
@@ -796,7 +801,6 @@ public class ExpressionAnalyzer
         return new ExpressionAnalysis(
                 analyzer.getExpressionTypes(),
                 analyzer.getExpressionCoercions(),
-                analyzer.getResolvedFunctions(),
                 analyzer.getSubqueryInPredicates());
     }
 
@@ -826,6 +830,6 @@ public class ExpressionAnalyzer
 
         Set<InPredicate> subqueryInPredicates = analyzer.getSubqueryInPredicates();
 
-        return new ExpressionAnalysis(expressionTypes, expressionCoercions, resolvedFunctions, subqueryInPredicates);
+        return new ExpressionAnalysis(expressionTypes, expressionCoercions, subqueryInPredicates);
     }
 }

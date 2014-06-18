@@ -24,23 +24,16 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
 
 import static com.facebook.presto.benchmark.BenchmarkQueryRunner.createLocalQueryRunner;
-import static com.facebook.presto.benchmark.BenchmarkQueryRunner.createLocalSampledQueryRunner;
 import static com.google.common.base.Preconditions.checkNotNull;
-import static io.airlift.concurrent.Threads.daemonThreadsNamed;
-import static java.util.concurrent.Executors.newCachedThreadPool;
 
 public class BenchmarkSuite
 {
     private static final Logger LOGGER = Logger.get(BenchmarkSuite.class);
 
-    public static List<AbstractBenchmark> createBenchmarks(ExecutorService executor)
+    public static List<AbstractBenchmark> createBenchmarks(LocalQueryRunner localQueryRunner)
     {
-        LocalQueryRunner localQueryRunner = createLocalQueryRunner(executor);
-        LocalQueryRunner localSampledQueryRunner = createLocalSampledQueryRunner(executor);
-
         return ImmutableList.<AbstractBenchmark>of(
                 // hand built benchmarks
                 new CountAggregationBenchmark(localQueryRunner),
@@ -79,12 +72,6 @@ public class BenchmarkSuite
                 new SqlApproximatePercentileBenchmark(localQueryRunner),
                 new SqlBetweenBenchmark(localQueryRunner),
 
-                // Sampled sql benchmarks
-                new RenamingBenchmark("sampled_", new GroupBySumWithArithmeticSqlBenchmark(localSampledQueryRunner)),
-                new RenamingBenchmark("sampled_", new CountAggregationSqlBenchmark(localSampledQueryRunner)),
-                new RenamingBenchmark("sampled_", new SqlJoinWithPredicateBenchmark(localSampledQueryRunner)),
-                new RenamingBenchmark("sampled_", new SqlDoubleSumAggregationBenchmark(localSampledQueryRunner)),
-
                 // statistics benchmarks
                 new StatisticsBenchmark.LongVarianceBenchmark(localQueryRunner),
                 new StatisticsBenchmark.LongVariancePopBenchmark(localQueryRunner),
@@ -108,7 +95,7 @@ public class BenchmarkSuite
         this.outputDirectory = checkNotNull(outputDirectory, "outputDirectory is null");
     }
 
-    private File createOutputFile(String fileName)
+    private static File createOutputFile(String fileName)
             throws IOException
     {
         File outputFile = new File(fileName);
@@ -119,9 +106,8 @@ public class BenchmarkSuite
     public void runAllBenchmarks()
             throws IOException
     {
-        ExecutorService executor = newCachedThreadPool(daemonThreadsNamed("test"));
-        try {
-            List<AbstractBenchmark> benchmarks = createBenchmarks(executor);
+        try (LocalQueryRunner localQueryRunner = createLocalQueryRunner()) {
+            List<AbstractBenchmark> benchmarks = createBenchmarks(localQueryRunner);
 
             LOGGER.info("=== Pre-running all benchmarks for JVM warmup ===");
             for (AbstractBenchmark benchmark : benchmarks) {
@@ -146,9 +132,6 @@ public class BenchmarkSuite
                     );
                 }
             }
-        }
-        finally {
-            executor.shutdownNow();
         }
     }
 

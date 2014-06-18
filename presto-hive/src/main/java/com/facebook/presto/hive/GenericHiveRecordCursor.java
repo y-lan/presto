@@ -20,8 +20,6 @@ import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
-import org.apache.hadoop.hive.metastore.MetaStoreUtils;
-import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.SerDeException;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
@@ -42,12 +40,15 @@ import java.util.Properties;
 import static com.facebook.presto.hive.HiveBooleanParser.isFalse;
 import static com.facebook.presto.hive.HiveBooleanParser.isTrue;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CURSOR_ERROR;
+import static com.facebook.presto.hive.HiveUtil.getDeserializer;
+import static com.facebook.presto.hive.HiveUtil.getTableObjectInspector;
 import static com.facebook.presto.hive.NumberParser.parseDouble;
 import static com.facebook.presto.hive.NumberParser.parseLong;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
+import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -115,13 +116,8 @@ class GenericHiveRecordCursor<K, V extends Writable>
         this.hiveStorageTimeZone = hiveStorageTimeZone;
         this.sessionTimeZone = sessionTimeZone;
 
-        try {
-            this.deserializer = MetaStoreUtils.getDeserializer(null, splitSchema);
-            this.rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
-        }
-        catch (MetaException | SerDeException | RuntimeException e) {
-            throw Throwables.propagate(e);
-        }
+        this.deserializer = getDeserializer(splitSchema);
+        this.rowInspector = getTableObjectInspector(deserializer);
 
         int size = columns.size();
 
@@ -444,7 +440,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
         else if (DOUBLE.equals(type)) {
             parseDoubleColumn(column);
         }
-        else if (VARCHAR.equals(type)) {
+        else if (VARCHAR.equals(type) || VARBINARY.equals(type)) {
             parseStringColumn(column);
         }
         else if (TIMESTAMP.equals(type)) {

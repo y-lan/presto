@@ -15,6 +15,9 @@ package com.facebook.presto.ml;
 
 import com.google.common.base.Throwables;
 import com.google.common.io.Files;
+import com.google.common.util.concurrent.SimpleTimeLimiter;
+import com.google.common.util.concurrent.TimeLimiter;
+import io.airlift.concurrent.Threads;
 import libsvm.svm;
 import libsvm.svm_model;
 import libsvm.svm_node;
@@ -25,6 +28,10 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.SortedMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -32,9 +39,11 @@ public abstract class AbstractSvmModel
         implements Model
 {
     protected svm_model model;
+    protected svm_parameter params;
 
-    protected AbstractSvmModel()
+    protected AbstractSvmModel(svm_parameter params)
     {
+        this.params = checkNotNull(params, "params is null");
     }
 
     protected AbstractSvmModel(svm_model model)
@@ -65,28 +74,38 @@ public abstract class AbstractSvmModel
     @Override
     public void train(Dataset dataset)
     {
-        svm_parameter param = new svm_parameter();
-        // default values
-        param.svm_type = getLibsvmType();
-        param.kernel_type = svm_parameter.LINEAR;
-        param.degree = 3;
-        param.gamma = 0;
-        param.coef0 = 0;
-        param.nu = 0.5;
-        param.cache_size = 100;
-        param.C = 1;
-        param.eps = 0.1;
-        param.p = 0.1;
-        param.shrinking = 1;
-        param.probability = 0;
-        param.nr_weight = 0;
-        param.weight_label = new int[0];
-        param.weight = new double[0];
+        params.svm_type = getLibsvmType();
 
         svm_problem problem = toSvmProblem(dataset);
 
-        //TODO: we should probably run this in another thread, and put a bound on the running time
-        model = svm.svm_train(problem, param);
+        ExecutorService service = Executors.newCachedThreadPool(Threads.threadsNamed("libsvm-trainer-" + System.identityHashCode(this) + "-%d"));
+        try {
+            TimeLimiter limiter = new SimpleTimeLimiter(service);
+            //TODO: this time limit should be configurable
+            model = limiter.callWithTimeout(getTrainingFunction(problem, params), 1, TimeUnit.HOURS, true);
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw Throwables.propagate(e);
+        }
+        catch (Exception e) {
+            throw Throwables.propagate(e);
+        }
+        finally {
+            service.shutdownNow();
+        }
+    }
+
+    private static Callable<svm_model> getTrainingFunction(final svm_problem problem, final svm_parameter param)
+    {
+        return new Callable<svm_model>() {
+            @Override
+            public svm_model call()
+                    throws Exception
+            {
+                return svm.svm_train(problem, param);
+            }
+        };
     }
 
     protected abstract int getLibsvmType();
