@@ -17,6 +17,7 @@ import com.facebook.presto.discovery.EmbeddedDiscoveryModule;
 import com.facebook.presto.execution.NodeSchedulerConfig;
 import com.facebook.presto.metadata.CatalogManager;
 import com.facebook.presto.metadata.Metadata;
+import com.facebook.presto.sql.parser.SqlParserOptions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
@@ -52,6 +53,7 @@ import java.util.Set;
 
 import static com.facebook.presto.server.CodeCacheGcTrigger.installCodeCacheGcTrigger;
 import static com.facebook.presto.server.PrestoJvmRequirements.verifyJvmRequirements;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.nullToEmpty;
 import static io.airlift.discovery.client.ServiceAnnouncement.ServiceAnnouncementBuilder;
 import static io.airlift.discovery.client.ServiceAnnouncement.serviceAnnouncement;
@@ -62,6 +64,18 @@ public class PrestoServer
     public static void main(String[] args)
     {
         new PrestoServer().run();
+    }
+
+    private final SqlParserOptions sqlParserOptions;
+
+    public PrestoServer()
+    {
+        this(new SqlParserOptions());
+    }
+
+    public PrestoServer(SqlParserOptions sqlParserOptions)
+    {
+        this.sqlParserOptions = checkNotNull(sqlParserOptions, "sqlParserOptions is null");
     }
 
     @Override
@@ -77,7 +91,7 @@ public class PrestoServer
                 new DiscoveryModule(),
                 new HttpServerModule(),
                 new JsonModule(),
-                new JaxrsModule(),
+                new JaxrsModule(true),
                 new MBeanModule(),
                 new JmxModule(),
                 new JmxHttpModule(),
@@ -95,8 +109,8 @@ public class PrestoServer
                         Multibinder.newSetBinder(binder, EventClient.class).addBinding().to(
                                 Key.get(QueryEventClient.class)).in(Scopes.SINGLETON);
                     }
-                }
-        );
+                },
+                new ServerMainModule(sqlParserOptions));
 
         modules.addAll(getAdditionalModules());
 

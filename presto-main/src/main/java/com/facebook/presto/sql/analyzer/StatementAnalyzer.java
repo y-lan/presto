@@ -19,10 +19,12 @@ import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.metadata.TableHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.tree.AllColumns;
 import com.facebook.presto.sql.tree.Approximate;
 import com.facebook.presto.sql.tree.BooleanLiteral;
 import com.facebook.presto.sql.tree.Cast;
+import com.facebook.presto.sql.tree.CoalesceExpression;
 import com.facebook.presto.sql.tree.CreateTable;
 import com.facebook.presto.sql.tree.CreateView;
 import com.facebook.presto.sql.tree.DefaultTraversalVisitor;
@@ -101,11 +103,19 @@ class StatementAnalyzer
     private final ConnectorSession session;
     private final Optional<QueryExplainer> queryExplainer;
     private final boolean experimentalSyntaxEnabled;
+    private final SqlParser sqlParser;
 
-    public StatementAnalyzer(Analysis analysis, Metadata metadata, ConnectorSession session, boolean experimentalSyntaxEnabled, Optional<QueryExplainer> queryExplainer)
+    public StatementAnalyzer(
+            Analysis analysis,
+            Metadata metadata,
+            SqlParser sqlParser,
+            ConnectorSession session,
+            boolean experimentalSyntaxEnabled,
+            Optional<QueryExplainer> queryExplainer)
     {
         this.analysis = checkNotNull(analysis, "analysis is null");
         this.metadata = checkNotNull(metadata, "metadata is null");
+        this.sqlParser = checkNotNull(sqlParser, "sqlParser is null");
         this.session = checkNotNull(session, "session is null");
         this.experimentalSyntaxEnabled = experimentalSyntaxEnabled;
         this.queryExplainer = checkNotNull(queryExplainer, "queryExplainer is null");
@@ -216,7 +226,8 @@ class StatementAnalyzer
                                 aliasedName("column_name", "Column"),
                                 aliasedName("data_type", "Type"),
                                 aliasedYesNoToBoolean("is_nullable", "Null"),
-                                aliasedYesNoToBoolean("is_partition_key", "Partition Key")),
+                                aliasedYesNoToBoolean("is_partition_key", "Partition Key"),
+                                aliasedNullToEmpty("comment", "Comment")),
                         table(QualifiedName.of(tableName.getCatalogName(), TABLE_COLUMNS.getSchemaName(), TABLE_COLUMNS.getTableName())),
                         Optional.of(logicalAnd(
                                 equal(nameReference("table_schema"), new StringLiteral(tableName.getSchemaName())),
@@ -246,6 +257,11 @@ class StatementAnalyzer
                 BooleanLiteral.TRUE_LITERAL,
                 BooleanLiteral.FALSE_LITERAL);
         return new SingleColumn(expression, alias);
+    }
+
+    private static SelectItem aliasedNullToEmpty(String column, String alias)
+    {
+        return new SingleColumn(new CoalesceExpression(nameReference(column), new StringLiteral("")), alias);
     }
 
     @Override
@@ -477,7 +493,7 @@ class StatementAnalyzer
 
         analyzeWith(node, context);
 
-        TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, experimentalSyntaxEnabled);
+        TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, sqlParser, experimentalSyntaxEnabled);
         TupleDescriptor descriptor = analyzer.process(node.getQueryBody(), context);
         analyzeOrderBy(node, descriptor, context);
 
@@ -553,6 +569,7 @@ class StatementAnalyzer
                     orderByField = new FieldOrExpression(expression);
                     ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                             metadata,
+                            sqlParser,
                             tupleDescriptor,
                             analysis,
                             experimentalSyntaxEnabled,

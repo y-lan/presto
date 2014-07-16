@@ -14,13 +14,12 @@
 package com.facebook.presto.operator.aggregation;
 
 import com.facebook.presto.operator.aggregation.state.NullableDoubleState;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.block.Block;
 
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 
 public class DoubleSumAggregation
-        extends AbstractAggregationFunction<NullableDoubleState>
+        extends AbstractSimpleAggregationFunction<NullableDoubleState>
 {
     public static final AggregationFunction DOUBLE_SUM = new DoubleSumAggregation();
 
@@ -30,20 +29,9 @@ public class DoubleSumAggregation
     }
 
     @Override
-    public void processInput(NullableDoubleState state, BlockCursor cursor)
+    public void processInput(NullableDoubleState state, Block block, int index)
     {
-        state.setNotNull(true);
-        state.setDouble(state.getDouble() + cursor.getDouble());
-    }
-
-    @Override
-    public void evaluateFinal(NullableDoubleState state, BlockBuilder out)
-    {
-        if (state.getNotNull()) {
-            out.appendDouble(state.getDouble());
-        }
-        else {
-            out.appendNull();
-        }
+        state.setNull(false);
+        state.setDouble(state.getDouble() + block.getDouble(index));
     }
 }

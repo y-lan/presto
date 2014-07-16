@@ -14,20 +14,16 @@
 package com.facebook.presto.operator.aggregation;
 
 import com.facebook.presto.operator.aggregation.state.LongAndDoubleState;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.spi.type.Type;
-import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
-import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
-import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 
 public class AverageAggregation
-        extends AbstractAggregationFunction<LongAndDoubleState>
+        extends AbstractExactAggregationFunction<LongAndDoubleState>
 {
     private final boolean inputIsLong;
 
@@ -47,42 +43,25 @@ public class AverageAggregation
     }
 
     @Override
-    protected void processInput(LongAndDoubleState state, BlockCursor cursor)
+    protected void processInput(LongAndDoubleState state, Block block, int index)
     {
         state.setLong(state.getLong() + 1);
 
         double value;
         if (inputIsLong) {
-            value = cursor.getLong();
+            value = block.getLong(index);
         }
         else {
-            value = cursor.getDouble();
+            value = block.getDouble(index);
         }
         state.setDouble(state.getDouble() + value);
     }
 
     @Override
-    public void evaluateIntermediate(LongAndDoubleState state, BlockBuilder output)
+    protected void combineState(LongAndDoubleState state, LongAndDoubleState otherState)
     {
-        long count = state.getLong();
-        double sum = state.getDouble();
-
-        // TODO: replace this when general fixed with values are supported
-        Slice value = Slices.allocate(SIZE_OF_LONG + SIZE_OF_DOUBLE);
-        value.setLong(0, count);
-        value.setDouble(SIZE_OF_LONG, sum);
-        output.appendSlice(value);
-    }
-
-    @Override
-    public void processIntermediate(LongAndDoubleState state, BlockCursor cursor)
-    {
-        Slice value = cursor.getSlice();
-        long count = value.getLong(0);
-        state.setLong(state.getLong() + count);
-
-        double sum = value.getDouble(SIZE_OF_LONG);
-        state.setDouble(state.getDouble() + sum);
+        state.setLong(state.getLong() + otherState.getLong());
+        state.setDouble(state.getDouble() + otherState.getDouble());
     }
 
     @Override

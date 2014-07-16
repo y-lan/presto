@@ -14,14 +14,13 @@
 package com.facebook.presto.operator.aggregation;
 
 import com.facebook.presto.operator.aggregation.state.LongState;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.Type;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 
 public class CountColumnAggregation
-        extends AbstractAggregationFunction<LongState>
+        extends AbstractExactAggregationFunction<LongState>
 {
     public CountColumnAggregation(Type parameterType)
     {
@@ -29,20 +28,14 @@ public class CountColumnAggregation
     }
 
     @Override
-    protected void processInput(LongState state, BlockCursor cursor)
+    protected void processInput(LongState state, Block block, int index)
     {
         state.setLong(state.getLong() + 1);
     }
 
     @Override
-    protected void processIntermediate(LongState state, BlockCursor cursor)
+    protected void combineState(LongState state, LongState otherState)
     {
-        state.setLong(state.getLong() + cursor.getLong());
-    }
-
-    @Override
-    protected void evaluateFinal(LongState state, BlockBuilder out)
-    {
-        out.appendLong(state.getLong());
+        state.setLong(state.getLong() + otherState.getLong());
     }
 }

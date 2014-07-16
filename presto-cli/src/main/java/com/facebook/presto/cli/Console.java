@@ -17,8 +17,10 @@ import com.facebook.presto.cli.ClientOptions.OutputFormat;
 import com.facebook.presto.client.ClientSession;
 import com.facebook.presto.client.QueryResults;
 import com.facebook.presto.client.StatementClient;
+import com.facebook.presto.sql.parser.IdentifierSymbol;
 import com.facebook.presto.sql.parser.ParsingException;
 import com.facebook.presto.sql.parser.SqlParser;
+import com.facebook.presto.sql.parser.SqlParserOptions;
 import com.facebook.presto.sql.parser.StatementSplitter;
 import com.facebook.presto.sql.tree.UseCollection;
 import com.google.common.base.Charsets;
@@ -42,6 +44,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.List;
+import java.util.EnumSet;
 
 import static com.facebook.presto.cli.Help.getHelpText;
 import static com.facebook.presto.sql.parser.StatementSplitter.Statement;
@@ -57,6 +60,9 @@ public class Console
         implements Runnable
 {
     private static final String PROMPT_NAME = "presto";
+
+    // create a parser with all identifier options enabled, since this is only used for USE statements
+    private static final SqlParser SQL_PARSER = new SqlParser(new SqlParserOptions().allowIdentifierSymbol(EnumSet.allOf(IdentifierSymbol.class)));
 
     @Inject
     public HelpOption helpOption;
@@ -214,7 +220,7 @@ public class Console
     private static Optional<Object> getParsedStatement(String statement)
     {
         try {
-            return Optional.of((Object) SqlParser.createStatement(statement));
+            return Optional.of((Object) SQL_PARSER.createStatement(statement));
         }
         catch (ParsingException e) {
             return Optional.absent();

@@ -14,20 +14,18 @@
 package com.facebook.presto.operator.aggregation;
 
 import com.facebook.presto.operator.aggregation.state.VarianceState;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.spi.type.Type;
-import io.airlift.slice.Slice;
 
-import static com.facebook.presto.operator.aggregation.OnlineVarianceCalculator.mergeState;
-import static com.facebook.presto.operator.aggregation.OnlineVarianceCalculator.toSlice;
-import static com.facebook.presto.operator.aggregation.OnlineVarianceCalculator.updateState;
+import static com.facebook.presto.operator.aggregation.AggregationUtils.mergeVarianceState;
+import static com.facebook.presto.operator.aggregation.AggregationUtils.updateVarianceState;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 
 public class VarianceAggregation
-        extends AbstractAggregationFunction<VarianceState>
+        extends AbstractExactAggregationFunction<VarianceState>
 {
     protected final boolean population;
     protected final boolean inputIsLong;
@@ -53,17 +51,17 @@ public class VarianceAggregation
     }
 
     @Override
-    protected void processInput(VarianceState state, BlockCursor cursor)
+    protected void processInput(VarianceState state, Block block, int index)
     {
         double inputValue;
         if (inputIsLong) {
-            inputValue = cursor.getLong();
+            inputValue = block.getLong(index);
         }
         else {
-            inputValue = cursor.getDouble();
+            inputValue = block.getDouble(index);
         }
 
-        updateState(state, inputValue);
+        updateVarianceState(state, inputValue);
     }
 
     @Override
@@ -99,15 +97,8 @@ public class VarianceAggregation
     }
 
     @Override
-    protected void evaluateIntermediate(VarianceState state, BlockBuilder out)
+    protected void combineState(VarianceState state, VarianceState otherState)
     {
-        out.appendSlice(toSlice(state));
-    }
-
-    @Override
-    protected void processIntermediate(VarianceState state, BlockCursor cursor)
-    {
-        Slice slice = cursor.getSlice();
-        mergeState(state, slice);
+        mergeVarianceState(state, otherState);
     }
 }

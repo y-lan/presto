@@ -56,6 +56,7 @@ import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.tree.ExplainType.Type.DISTRIBUTED;
 import static com.facebook.presto.sql.tree.ExplainType.Type.LOGICAL;
 import static com.facebook.presto.testing.MaterializedResult.resultBuilder;
+import static com.facebook.presto.tests.QueryAssertions.assertEqualsIgnoreOrder;
 import static com.google.common.collect.Iterables.transform;
 import static io.airlift.tpch.TpchTable.ORDERS;
 import static io.airlift.tpch.TpchTable.tableNameGetter;
@@ -1882,6 +1883,51 @@ public abstract class AbstractTestQueries
     }
 
     @Test
+    public void testWindowLagValueFunction()
+    {
+        MaterializedResult actual = computeActual("" +
+                "SELECT * FROM (\n" +
+                "  SELECT orderkey, orderstatus\n" +
+                "    , lag(orderkey + 1000, 1, 0) OVER (PARTITION BY orderstatus ORDER BY orderkey) as lvalue\n" +
+                "    FROM (SELECT * FROM orders ORDER BY orderkey LIMIT 10) x\n" +
+                "  ) x\n" +
+                "ORDER BY orderkey LIMIT 5");
+
+        MaterializedResult expected = resultBuilder(getSession(), BIGINT, VARCHAR, BIGINT)
+                .row(1, "O", 0)
+                .row(2, "O", 1001)
+                .row(3, "F", 0)
+                .row(4, "O", 1002)
+                .row(5, "F", 1003)
+                .build();
+
+        assertEquals(actual, expected);
+    }
+
+    @Test
+    public void testWindowLeadValueFunction()
+    {
+        MaterializedResult actual = computeActual("" +
+                "SELECT * FROM (\n" +
+                "  SELECT orderkey, orderstatus\n" +
+                "    , lead(orderkey + 1000, 2, 0) OVER (PARTITION BY orderstatus ORDER BY orderkey) as lvalue\n" +
+                "    FROM (SELECT * FROM orders ORDER BY orderkey LIMIT 10) x\n" +
+                "  ) x\n" +
+                "ORDER BY orderkey LIMIT 6");
+
+        MaterializedResult expected = resultBuilder(getSession(), BIGINT, VARCHAR, BIGINT)
+                .row(1, "O", 1004)
+                .row(2, "O", 1007)
+                .row(3, "F", 1006)
+                .row(4, "O", 1032)
+                .row(5, "F", 1033)
+                .row(6, "F", 0)
+                .build();
+
+        assertEquals(actual, expected);
+    }
+
+    @Test
     public void testScalarFunction()
             throws Exception
     {
@@ -1897,6 +1943,18 @@ public abstract class AbstractTestQueries
         assertQuery("SELECT CAST(orderkey AS DOUBLE) FROM orders");
         assertQuery("SELECT CAST(orderkey AS VARCHAR) FROM orders");
         assertQuery("SELECT CAST(orderkey AS BOOLEAN) FROM orders");
+
+        assertQuery("SELECT try_cast('1' AS BIGINT) FROM orders", "SELECT CAST('1' AS BIGINT) FROM orders");
+        assertQuery("SELECT try_cast(totalprice AS BIGINT) FROM orders", "SELECT CAST(totalprice AS BIGINT) FROM orders");
+        assertQuery("SELECT try_cast(orderkey AS DOUBLE) FROM orders", "SELECT CAST(orderkey AS DOUBLE) FROM orders");
+        assertQuery("SELECT try_cast(orderkey AS VARCHAR) FROM orders", "SELECT CAST(orderkey AS VARCHAR) FROM orders");
+        assertQuery("SELECT try_cast(orderkey AS BOOLEAN) FROM orders", "SELECT CAST(orderkey AS BOOLEAN) FROM orders");
+
+        assertQuery("SELECT try_cast('foo' AS BIGINT) FROM orders", "SELECT CAST(null AS BIGINT) FROM orders");
+        assertQuery("SELECT try_cast(orderdate AS BIGINT) FROM orders", "SELECT CAST(null AS BIGINT) FROM orders");
+
+        assertQuery("SELECT coalesce(try_cast('foo' AS BIGINT), 456) FROM orders", "SELECT 456 FROM orders");
+        assertQuery("SELECT coalesce(try_cast(orderdate AS BIGINT), 456) FROM orders", "SELECT 456 FROM orders");
     }
 
     @Test
@@ -2340,16 +2398,16 @@ public abstract class AbstractTestQueries
     {
         MaterializedResult actual = computeActual("SHOW COLUMNS FROM orders");
 
-        MaterializedResult expected = resultBuilder(getSession(), VARCHAR, VARCHAR, BOOLEAN, BOOLEAN)
-                .row("orderkey", "bigint", true, false)
-                .row("custkey", "bigint", true, false)
-                .row("orderstatus", "varchar", true, false)
-                .row("totalprice", "double", true, false)
-                .row("orderdate", "varchar", true, false)
-                .row("orderpriority", "varchar", true, false)
-                .row("clerk", "varchar", true, false)
-                .row("shippriority", "bigint", true, false)
-                .row("comment", "varchar", true, false)
+        MaterializedResult expected = resultBuilder(getSession(), VARCHAR, VARCHAR, BOOLEAN, BOOLEAN, VARCHAR)
+                .row("orderkey", "bigint", true, false, "")
+                .row("custkey", "bigint", true, false, "")
+                .row("orderstatus", "varchar", true, false, "")
+                .row("totalprice", "double", true, false, "")
+                .row("orderdate", "varchar", true, false, "")
+                .row("orderpriority", "varchar", true, false, "")
+                .row("clerk", "varchar", true, false, "")
+                .row("shippriority", "bigint", true, false, "")
+                .row("comment", "varchar", true, false, "")
                 .build();
 
         assertEquals(actual, expected);
@@ -2524,7 +2582,7 @@ public abstract class AbstractTestQueries
     public void testTableQueryOrderLimit()
             throws Exception
     {
-        assertQuery("TABLE orders ORDER BY orderkey LIMIT 10", "SELECT * FROM orders ORDER BY orderkey LIMIT 10", true);
+        assertQueryOrdered("TABLE orders ORDER BY orderkey LIMIT 10", "SELECT * FROM orders ORDER BY orderkey LIMIT 10");
     }
 
     @Test
@@ -2538,7 +2596,7 @@ public abstract class AbstractTestQueries
     public void testTableAsSubquery()
             throws Exception
     {
-        assertQuery("(TABLE orders) ORDER BY orderkey", "(SELECT * FROM orders) ORDER BY orderkey", true);
+        assertQueryOrdered("(TABLE orders) ORDER BY orderkey", "(SELECT * FROM orders) ORDER BY orderkey");
     }
 
     @Test
@@ -3041,8 +3099,8 @@ public abstract class AbstractTestQueries
         long total = (long) computeExpected("SELECT COUNT(*) FROM orders", ImmutableList.of(BIGINT)).getMaterializedRows().get(0).getField(0);
 
         for (int i = 0; i < 100; i++) {
-            long value = (long) computeActual("SELECT COUNT(*) FROM orders TABLESAMPLE POISSONIZED (50) RESCALED").getMaterializedRows().get(0).getField(0);
-            stats.addValue(value * 1.0 / total);
+            String value = (String) computeActual("SELECT COUNT(*) FROM orders TABLESAMPLE POISSONIZED (50) RESCALED APPROXIMATE AT 95 CONFIDENCE").getMaterializedRows().get(0).getField(0);
+            stats.addValue(Long.parseLong(value.split(" ")[0]) * 1.0 / total);
         }
 
         double mean = stats.getGeometricMean();

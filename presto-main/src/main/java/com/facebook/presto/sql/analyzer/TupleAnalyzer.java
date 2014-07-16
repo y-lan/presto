@@ -78,6 +78,7 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static com.facebook.presto.metadata.ViewDefinition.ViewColumn;
@@ -118,9 +119,10 @@ class TupleAnalyzer
     private final Analysis analysis;
     private final ConnectorSession session;
     private final Metadata metadata;
+    private final SqlParser sqlParser;
     private final boolean experimentalSyntaxEnabled;
 
-    public TupleAnalyzer(Analysis analysis, ConnectorSession session, Metadata metadata, boolean experimentalSyntaxEnabled)
+    public TupleAnalyzer(Analysis analysis, ConnectorSession session, Metadata metadata, SqlParser sqlParser, boolean experimentalSyntaxEnabled)
     {
         checkNotNull(analysis, "analysis is null");
         checkNotNull(session, "session is null");
@@ -129,6 +131,7 @@ class TupleAnalyzer
         this.analysis = analysis;
         this.session = session;
         this.metadata = metadata;
+        this.sqlParser = sqlParser;
         this.experimentalSyntaxEnabled = experimentalSyntaxEnabled;
     }
 
@@ -193,15 +196,16 @@ class TupleAnalyzer
             throw new SemanticException(MISSING_TABLE, table, "Table %s does not exist", name);
         }
         TableMetadata tableMetadata = metadata.getTableMetadata(tableHandle.get());
+        Map<String, ColumnHandle> columnHandles = metadata.getColumnHandles(tableHandle.get());
 
         // TODO: discover columns lazily based on where they are needed (to support datasources that can't enumerate all tables)
         ImmutableList.Builder<Field> fields = ImmutableList.builder();
         for (ColumnMetadata column : tableMetadata.getColumns()) {
             Field field = Field.newQualified(table.getName(), Optional.of(column.getName()), column.getType(), column.isHidden());
             fields.add(field);
-            Optional<ColumnHandle> columnHandle = metadata.getColumnHandle(tableHandle.get(), column.getName());
-            checkArgument(columnHandle.isPresent(), "Unknown field %s", field);
-            analysis.setColumn(field, columnHandle.get());
+            ColumnHandle columnHandle = columnHandles.get(column.getName());
+            checkArgument(columnHandle != null, "Unknown field %s", field);
+            analysis.setColumn(field, columnHandle);
         }
 
         analysis.registerTable(table, tableHandle.get());
@@ -241,7 +245,7 @@ class TupleAnalyzer
             throw new SemanticException(NON_NUMERIC_SAMPLE_PERCENTAGE, relation.getSamplePercentage(), "Sample percentage cannot contain column references");
         }
 
-        IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(session, metadata, ImmutableMap.<Symbol, Type>of(), relation.getSamplePercentage());
+        IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(session, metadata, sqlParser, ImmutableMap.<Symbol, Type>of(), relation.getSamplePercentage());
         ExpressionInterpreter samplePercentageEval = expressionOptimizer(relation.getSamplePercentage(), metadata, session, expressionTypes);
 
         Object samplePercentageObject = samplePercentageEval.optimize(new SymbolResolver()
@@ -281,7 +285,7 @@ class TupleAnalyzer
     @Override
     protected TupleDescriptor visitTableSubquery(TableSubquery node, AnalysisContext context)
     {
-        StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, session, experimentalSyntaxEnabled, Optional.<QueryExplainer>absent());
+        StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, sqlParser, session, experimentalSyntaxEnabled, Optional.<QueryExplainer>absent());
         TupleDescriptor descriptor = analyzer.process(node.getQuery(), context);
 
         analysis.setOutputDescriptor(node, descriptor);
@@ -320,7 +324,7 @@ class TupleAnalyzer
     {
         checkState(node.getRelations().size() >= 2);
 
-        TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, experimentalSyntaxEnabled);
+        TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, sqlParser, experimentalSyntaxEnabled);
 
         // Use the first descriptor as the output descriptor for the UNION
         TupleDescriptor outputDescriptor = analyzer.process(node.getRelations().get(0), context).withOnlyVisibleFields();
@@ -387,6 +391,7 @@ class TupleAnalyzer
 
                 ExpressionAnalysis leftExpressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                         metadata,
+                        sqlParser,
                         left,
                         analysis,
                         experimentalSyntaxEnabled,
@@ -394,6 +399,7 @@ class TupleAnalyzer
                         leftExpression);
                 ExpressionAnalysis rightExpressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                         metadata,
+                        sqlParser,
                         right,
                         analysis,
                         experimentalSyntaxEnabled,
@@ -412,7 +418,7 @@ class TupleAnalyzer
 
             // ensure all names can be resolved, types match, etc (we don't need to record resolved names, subexpression types, etc. because
             // we do it further down when after we determine which subexpressions apply to left vs right tuple)
-            ExpressionAnalyzer analyzer = new ExpressionAnalyzer(analysis, session, metadata, experimentalSyntaxEnabled);
+            ExpressionAnalyzer analyzer = new ExpressionAnalyzer(analysis, session, metadata, sqlParser, experimentalSyntaxEnabled);
             analyzer.analyze(expression, output, context);
 
             Analyzer.verifyNoAggregatesOrWindowFunctions(metadata, expression, "JOIN");
@@ -465,6 +471,7 @@ class TupleAnalyzer
                 // analyze the clauses to record the types of all subexpressions and resolve names against the left/right underlying tuples
                 ExpressionAnalysis leftExpressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                         metadata,
+                        sqlParser,
                         left,
                         analysis,
                         experimentalSyntaxEnabled,
@@ -472,6 +479,7 @@ class TupleAnalyzer
                         leftExpression);
                 ExpressionAnalysis rightExpressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                         metadata,
+                        sqlParser,
                         right,
                         analysis,
                         experimentalSyntaxEnabled,
@@ -497,7 +505,7 @@ class TupleAnalyzer
     {
         checkState(node.getRows().size() >= 1);
 
-        TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, experimentalSyntaxEnabled);
+        TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, sqlParser, experimentalSyntaxEnabled);
 
         // Use the first descriptor as the output descriptor for the VALUES
         TupleDescriptor outputDescriptor = analyzer.process(node.getRows().get(0), context).withOnlyVisibleFields();
@@ -524,6 +532,7 @@ class TupleAnalyzer
         for (Expression expression : node.getItems()) {
             ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                     metadata,
+                    sqlParser,
                     new TupleDescriptor(),
                     analysis,
                     experimentalSyntaxEnabled,
@@ -605,6 +614,7 @@ class TupleAnalyzer
 
             ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                     metadata,
+                    sqlParser,
                     tupleDescriptor,
                     analysis,
                     experimentalSyntaxEnabled,
@@ -677,6 +687,7 @@ class TupleAnalyzer
                 if (orderByExpression.isExpression()) {
                     ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                             metadata,
+                            sqlParser,
                             tupleDescriptor,
                             analysis,
                             experimentalSyntaxEnabled,
@@ -718,6 +729,7 @@ class TupleAnalyzer
                 else {
                     ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                             metadata,
+                            sqlParser,
                             tupleDescriptor,
                             analysis,
                             experimentalSyntaxEnabled,
@@ -799,6 +811,7 @@ class TupleAnalyzer
                 SingleColumn column = (SingleColumn) item;
                 ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                         metadata,
+                        sqlParser,
                         tupleDescriptor,
                         analysis,
                         experimentalSyntaxEnabled,
@@ -827,6 +840,7 @@ class TupleAnalyzer
 
             ExpressionAnalysis expressionAnalysis = ExpressionAnalyzer.analyzeExpression(session,
                     metadata,
+                    sqlParser,
                     tupleDescriptor,
                     analysis,
                     experimentalSyntaxEnabled,
@@ -852,7 +866,7 @@ class TupleAnalyzer
         TupleDescriptor fromDescriptor = new TupleDescriptor();
 
         if (node.getFrom() != null && !node.getFrom().isEmpty()) {
-            TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, experimentalSyntaxEnabled);
+            TupleAnalyzer analyzer = new TupleAnalyzer(analysis, session, metadata, sqlParser, experimentalSyntaxEnabled);
             if (node.getFrom().size() != 1) {
                 throw new SemanticException(NOT_SUPPORTED, node, "Implicit cross joins are not yet supported; use CROSS JOIN");
             }
@@ -954,7 +968,7 @@ class TupleAnalyzer
                     session.getRemoteUserAddress(),
                     session.getUserAgent(),
                     session.getStartTime());
-            StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, viewSession, experimentalSyntaxEnabled, Optional.<QueryExplainer>absent());
+            StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, sqlParser, viewSession, experimentalSyntaxEnabled, Optional.<QueryExplainer>absent());
             return analyzer.process(query, new AnalysisContext());
         }
         catch (RuntimeException e) {
@@ -962,10 +976,10 @@ class TupleAnalyzer
         }
     }
 
-    private static Query parseView(String view, QualifiedTableName name, Table node)
+    private Query parseView(String view, QualifiedTableName name, Table node)
     {
         try {
-            Statement statement = SqlParser.createStatement(view);
+            Statement statement = sqlParser.createStatement(view);
             return checkType(statement, Query.class, "parsed view");
         }
         catch (ParsingException e) {

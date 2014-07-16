@@ -13,6 +13,8 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hive.metastore.CachingHiveMetastore;
+import com.facebook.presto.hive.metastore.HiveMetastore;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorColumnHandle;
 import com.facebook.presto.spi.ConnectorMetadata;
@@ -124,7 +126,7 @@ public abstract class AbstractTestHiveClient
 
     protected DateTimeZone timeZone;
 
-    protected CachingHiveMetastore metastoreClient;
+    protected HiveMetastore metastoreClient;
 
     protected ConnectorMetadata metadata;
     protected ConnectorSplitManager splitManager;
@@ -215,6 +217,7 @@ public abstract class AbstractTestHiveClient
                 hiveClientConfig.getMaxInitialSplitSize(),
                 hiveClientConfig.getMaxInitialSplits(),
                 false,
+                hiveClientConfig.getHiveStorageFormat(),
                 false);
 
         metadata = client;
@@ -820,6 +823,13 @@ public abstract class AbstractTestHiveClient
         catch (HiveViewNotSupportedException e) {
             assertEquals(e.getTableName(), view);
         }
+    }
+
+    @Test
+    public void testHiveViewsHaveNoColumns()
+            throws Exception
+    {
+        assertEquals(metadata.listTableColumns(SESSION, new SchemaTablePrefix(view.getSchemaName(), view.getTableName())), ImmutableMap.of());
     }
 
     @Test

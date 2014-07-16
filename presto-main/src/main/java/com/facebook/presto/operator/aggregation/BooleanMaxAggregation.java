@@ -13,20 +13,18 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.operator.aggregation.state.ByteState;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.operator.aggregation.state.TriStateBooleanState;
+import com.facebook.presto.spi.block.Block;
 
+import static com.facebook.presto.operator.aggregation.state.TriStateBooleanState.FALSE_VALUE;
+import static com.facebook.presto.operator.aggregation.state.TriStateBooleanState.NULL_VALUE;
+import static com.facebook.presto.operator.aggregation.state.TriStateBooleanState.TRUE_VALUE;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 
 public class BooleanMaxAggregation
-        extends AbstractAggregationFunction<ByteState>
+        extends AbstractSimpleAggregationFunction<TriStateBooleanState>
 {
     public static final BooleanMaxAggregation BOOLEAN_MAX = new BooleanMaxAggregation();
-
-    private static final byte NULL_VALUE = 0;
-    private static final byte TRUE_VALUE = 1;
-    private static final byte FALSE_VALUE = -1;
 
     public BooleanMaxAggregation()
     {
@@ -34,10 +32,10 @@ public class BooleanMaxAggregation
     }
 
     @Override
-    protected void processInput(ByteState state, BlockCursor cursor)
+    protected void processInput(TriStateBooleanState state, Block block, int index)
     {
         // if value is true, update the max to true
-        if (cursor.getBoolean()) {
+        if (block.getBoolean(index)) {
             state.setByte(TRUE_VALUE);
         }
         else {
@@ -45,17 +43,6 @@ public class BooleanMaxAggregation
             if (state.getByte() == NULL_VALUE) {
                 state.setByte(FALSE_VALUE);
             }
-        }
-    }
-
-    @Override
-    protected void evaluateFinal(ByteState state, BlockBuilder out)
-    {
-        if (state.getByte() == NULL_VALUE) {
-            out.appendNull();
-        }
-        else {
-            out.appendBoolean(state.getByte() == TRUE_VALUE);
         }
     }
 }

@@ -93,6 +93,8 @@ tokens {
 
 @lexer::header {
     package com.facebook.presto.sql.parser;
+
+    import java.util.EnumSet;
 }
 
 @members {
@@ -119,14 +121,18 @@ tokens {
         if (e.token.getType() == DIGIT_IDENT) {
             return "identifiers must not start with a digit; surround the identifier with double quotes";
         }
-        if (e.token.getType() == COLON_IDENT) {
-            return "identifiers must not contain a colon; use '@' instead of ':' for table links";
-        }
         return super.getErrorMessage(e, tokenNames);
     }
 }
 
 @lexer::members {
+    private EnumSet<IdentifierSymbol> allowedIdentifierSymbols = EnumSet.noneOf(IdentifierSymbol.class);
+
+    public void setAllowedIdentifierSymbols(EnumSet<IdentifierSymbol> allowedIdentifierSymbols)
+    {
+        this.allowedIdentifierSymbols = EnumSet.copyOf(allowedIdentifierSymbols);
+    }
+
     @Override
     public void reportError(RecognitionException e)
     {
@@ -501,6 +507,7 @@ specialFunction
     | SUBSTRING '(' expr FROM expr (FOR expr)? ')' -> ^(FUNCTION_CALL ^(QNAME IDENT["substr"]) expr expr expr?)
     | EXTRACT '(' ident FROM expr ')'              -> ^(EXTRACT ident expr)
     | CAST '(' expr AS type ')'                    -> ^(CAST expr type)
+    | TRY_CAST '(' expr AS type ')'                -> ^(TRY_CAST expr type)
     ;
 
 // TODO: this should be 'dataType', which supports arbitrary type specifications. For now we constrain to simple types
@@ -835,6 +842,7 @@ JSON: 'JSON';
 LOGICAL: 'LOGICAL';
 DISTRIBUTED: 'DISTRIBUTED';
 CAST: 'CAST';
+TRY_CAST: 'TRY_CAST';
 SHOW: 'SHOW';
 TABLES: 'TABLES';
 SCHEMA: 'SCHEMA';
@@ -881,11 +889,12 @@ DECIMAL_VALUE
     ;
 
 IDENT
-    : (LETTER | '_') (LETTER | DIGIT | '_' | '\@')*
+    : (LETTER | '_') (LETTER | DIGIT | '_' | '\@' | ':')*
+        { IdentifierSymbol.validateIdentifier(input, getText(), allowedIdentifierSymbols); }
     ;
 
 DIGIT_IDENT
-    : DIGIT (LETTER | DIGIT | '_' | '\@')+
+    : DIGIT (LETTER | DIGIT | '_' | '\@' | ':')+
     ;
 
 QUOTED_IDENT
@@ -896,10 +905,6 @@ QUOTED_IDENT
 BACKQUOTED_IDENT
     : '`' ( ~'`' | '``' )* '`'
         { setText(getText().substring(1, getText().length() - 1).replace("``", "`")); }
-    ;
-
-COLON_IDENT
-    : (LETTER | DIGIT | '_' )+ ':' (LETTER | DIGIT | '_' )+
     ;
 
 fragment EXPONENT

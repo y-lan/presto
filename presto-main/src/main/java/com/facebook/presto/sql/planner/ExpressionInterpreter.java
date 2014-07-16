@@ -14,11 +14,12 @@
 package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.metadata.FunctionInfo;
+import com.facebook.presto.metadata.FunctionRegistry;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.OperatorType;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.RecordCursor;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.tree.ArithmeticExpression;
 import com.facebook.presto.sql.tree.AstVisitor;
@@ -31,8 +32,8 @@ import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.FunctionCall;
 import com.facebook.presto.sql.tree.InListExpression;
 import com.facebook.presto.sql.tree.InPredicate;
-import com.facebook.presto.sql.tree.Input;
 import com.facebook.presto.sql.tree.InputReference;
+import com.facebook.presto.sql.tree.IsNotNullPredicate;
 import com.facebook.presto.sql.tree.IsNullPredicate;
 import com.facebook.presto.sql.tree.LikePredicate;
 import com.facebook.presto.sql.tree.Literal;
@@ -121,10 +122,10 @@ public class ExpressionInterpreter
         return visitor.process(expression, inputs);
     }
 
-    public Object evaluate(BlockCursor[] inputs)
+    public Object evaluate(int position, Block... inputs)
     {
-        checkState(!optimize, "evaluate(BlockCursor[]) not allowed for optimizer");
-        return visitor.process(expression, inputs);
+        checkState(!optimize, "evaluate(int, Block...) not allowed for optimizer");
+        return visitor.process(expression, new PagePositionContext(position, inputs));
     }
 
     public Object optimize(SymbolResolver inputs)
@@ -140,29 +141,28 @@ public class ExpressionInterpreter
         @Override
         public Object visitInputReference(InputReference node, Object context)
         {
-            Input input = node.getInput();
+            int channel = node.getChannel();
+            if (context instanceof PagePositionContext) {
+                PagePositionContext pagePositionContext = (PagePositionContext) context;
+                int position = pagePositionContext.getPosition();
+                Block block = pagePositionContext.getBlock(channel);
 
-            int channel = input.getChannel();
-            if (context instanceof BlockCursor[]) {
-                BlockCursor[] inputs = (BlockCursor[]) context;
-                BlockCursor cursor = inputs[channel];
-
-                if (cursor.isNull()) {
+                if (block.isNull(position)) {
                     return null;
                 }
 
-                Class<?> javaType = cursor.getType().getJavaType();
+                Class<?> javaType = block.getType().getJavaType();
                 if (javaType == boolean.class) {
-                    return cursor.getBoolean();
+                    return block.getBoolean(position);
                 }
                 else if (javaType == long.class) {
-                    return cursor.getLong();
+                    return block.getLong(position);
                 }
                 else if (javaType == double.class) {
-                    return cursor.getDouble();
+                    return block.getDouble(position);
                 }
                 else if (javaType == Slice.class) {
-                    return cursor.getSlice();
+                    return block.getSlice(position);
                 }
                 else {
                     throw new UnsupportedOperationException("not yet implemented");
@@ -174,7 +174,7 @@ public class ExpressionInterpreter
                     return null;
                 }
 
-                Class<?> javaType = cursor.getType(input.getChannel()).getJavaType();
+                Class<?> javaType = cursor.getType(node.getChannel()).getJavaType();
                 if (javaType == boolean.class) {
                     return cursor.getBoolean(channel);
                 }
@@ -222,6 +222,18 @@ public class ExpressionInterpreter
             }
 
             return value == null;
+        }
+
+        @Override
+        protected Object visitIsNotNullPredicate(IsNotNullPredicate node, Object context)
+        {
+            Object value = process(node.getValue(), context);
+
+            if (value instanceof Expression) {
+                return new IsNotNullPredicate(toExpression(value, expressionTypes.get(node.getValue())));
+            }
+
+            return value != null;
         }
 
         @Override
@@ -503,11 +515,27 @@ public class ExpressionInterpreter
                 return first;
             }
 
+            Type firstType = expressionTypes.get(node.getFirst());
+            Type secondType = expressionTypes.get(node.getSecond());
+
             if (hasUnresolvedValue(first, second)) {
-                return new NullIfExpression(toExpression(first, expressionTypes.get(node.getFirst())), toExpression(second, expressionTypes.get(node.getSecond())));
+                return new NullIfExpression(toExpression(first, firstType), toExpression(second, secondType));
             }
 
-            if ((Boolean) invokeOperator(OperatorType.EQUAL, types(node.getFirst(), node.getSecond()), ImmutableList.of(first, second))) {
+            Type commonType = FunctionRegistry.getCommonSuperType(firstType, secondType).get();
+
+            FunctionInfo firstCast = metadata.getExactOperator(OperatorType.CAST, commonType, ImmutableList.of(firstType));
+            FunctionInfo secondCast = metadata.getExactOperator(OperatorType.CAST, commonType, ImmutableList.of(secondType));
+
+            // cast(first as <common type>) == cast(second as <common type>)
+            boolean equal = (Boolean) invokeOperator(
+                    OperatorType.EQUAL,
+                    ImmutableList.of(commonType, commonType),
+                    ImmutableList.of(
+                            invoke(session, firstCast.getMethodHandle(), ImmutableList.of(first)),
+                            invoke(session, secondCast.getMethodHandle(), ImmutableList.of(second))));
+
+            if (equal) {
                 return null;
             }
             else {
@@ -679,7 +707,7 @@ public class ExpressionInterpreter
             Object value = process(node.getExpression(), context);
 
             if (value instanceof Expression) {
-                return new Cast((Expression) value, node.getType());
+                return new Cast((Expression) value, node.getType(), node.isSafe());
             }
 
             if (value == null) {
@@ -692,7 +720,16 @@ public class ExpressionInterpreter
             }
 
             FunctionInfo operatorInfo = metadata.getExactOperator(OperatorType.CAST, type, types(node.getExpression()));
-            return invoke(session, operatorInfo.getMethodHandle(), ImmutableList.of(value));
+
+            try {
+                return invoke(session, operatorInfo.getMethodHandle(), ImmutableList.of(value));
+            }
+            catch (RuntimeException e) {
+                if (node.isSafe()) {
+                    return null;
+                }
+                throw e;
+            }
         }
 
         @Override
@@ -740,6 +777,28 @@ public class ExpressionInterpreter
         }
     }
 
+    private static class PagePositionContext
+    {
+        private final int position;
+        private final Block[] blocks;
+
+        private PagePositionContext(int position, Block[] blocks)
+        {
+            this.position = position;
+            this.blocks = blocks;
+        }
+
+        public Block getBlock(int channel)
+        {
+            return blocks[channel];
+        }
+
+        public int getPosition()
+        {
+            return position;
+        }
+    }
+
     public static Object invoke(ConnectorSession session, MethodHandle handle, List<Object> argumentValues)
     {
         if (handle.type().parameterCount() > 0 && handle.type().parameterType(0) == ConnectorSession.class) {
@@ -749,9 +808,10 @@ public class ExpressionInterpreter
             return handle.invokeWithArguments(argumentValues);
         }
         catch (Throwable throwable) {
-            Throwables.propagateIfInstanceOf(throwable, RuntimeException.class);
-            Throwables.propagateIfInstanceOf(throwable, Error.class);
-            throw new RuntimeException(throwable.getMessage(), throwable);
+            if (throwable instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw Throwables.propagate(throwable);
         }
     }
 

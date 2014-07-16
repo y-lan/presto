@@ -44,7 +44,6 @@ import io.airlift.json.JsonCodecFactory;
 import io.airlift.json.ObjectMapperProvider;
 
 import javax.inject.Inject;
-import javax.inject.Singleton;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -67,7 +66,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.Iterables.transform;
 
-@Singleton
 public class MetadataManager
         implements Metadata
 {
@@ -381,13 +379,13 @@ public class MetadataManager
         checkNotNull(prefix, "prefix is null");
 
         String schemaNameOrNull = prefix.getSchemaName().orNull();
-        Set<QualifiedTableName> tables = new LinkedHashSet<>();
+        Set<QualifiedTableName> views = new LinkedHashSet<>();
         for (ConnectorMetadataEntry entry : allConnectorsFor(prefix.getCatalogName())) {
             for (QualifiedTableName tableName : transform(entry.getMetadata().listViews(session, schemaNameOrNull), convertFromSchemaTableName(prefix.getCatalogName()))) {
-                tables.add(tableName);
+                views.add(tableName);
             }
         }
-        return ImmutableList.copyOf(tables);
+        return ImmutableList.copyOf(views);
     }
 
     @Override

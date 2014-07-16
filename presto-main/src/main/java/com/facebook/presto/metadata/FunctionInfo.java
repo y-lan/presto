@@ -15,11 +15,10 @@ package com.facebook.presto.metadata;
 
 import com.facebook.presto.operator.AggregationFunctionDefinition;
 import com.facebook.presto.operator.WindowFunctionDefinition;
-import com.facebook.presto.operator.window.WindowFunctionSupplier;
 import com.facebook.presto.operator.aggregation.AggregationFunction;
+import com.facebook.presto.operator.window.WindowFunctionSupplier;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.gen.FunctionBinder;
-import com.facebook.presto.sql.tree.Input;
 import com.facebook.presto.sql.tree.QualifiedName;
 import com.google.common.base.Function;
 import com.google.common.base.Objects;
@@ -155,13 +154,13 @@ public final class FunctionInfo
         return intermediateType;
     }
 
-    public WindowFunctionDefinition bindWindowFunction(List<Input> inputs)
+    public WindowFunctionDefinition bindWindowFunction(List<Integer> inputs)
     {
         checkState(isWindow, "not a window function");
         return window(windowFunctionSupplier, inputs);
     }
 
-    public AggregationFunctionDefinition bind(List<Input> inputs, Optional<Input> mask, Optional<Input> sampleWeight, double confidence)
+    public AggregationFunctionDefinition bind(List<Integer> inputs, Optional<Integer> mask, Optional<Integer> sampleWeight, double confidence)
     {
         checkState(isAggregate, "function is not an aggregate");
         return aggregation(aggregationFunction, inputs, mask, sampleWeight, confidence);
