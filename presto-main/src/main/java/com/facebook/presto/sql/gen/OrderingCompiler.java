@@ -19,10 +19,11 @@ import com.facebook.presto.byteCode.ClassInfoLoader;
 import com.facebook.presto.byteCode.CompilerContext;
 import com.facebook.presto.byteCode.DumpByteCodeVisitor;
 import com.facebook.presto.byteCode.DynamicClassLoader;
-import com.facebook.presto.byteCode.LocalVariableDefinition;
 import com.facebook.presto.byteCode.MethodDefinition;
 import com.facebook.presto.byteCode.ParameterizedType;
 import com.facebook.presto.byteCode.SmartClassWriter;
+import com.facebook.presto.byteCode.Variable;
+import com.facebook.presto.byteCode.expression.ByteCodeExpression;
 import com.facebook.presto.byteCode.instruction.LabelNode;
 import com.facebook.presto.operator.PagesIndex;
 import com.facebook.presto.operator.PagesIndexComparator;
@@ -30,6 +31,7 @@ import com.facebook.presto.operator.PagesIndexOrdering;
 import com.facebook.presto.operator.SimplePagesIndexComparator;
 import com.facebook.presto.operator.SyntheticAddress;
 import com.facebook.presto.spi.block.SortOrder;
+import com.facebook.presto.spi.type.Type;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
 import com.google.common.base.Throwables;
@@ -51,7 +53,6 @@ import org.objectweb.asm.util.TraceClassVisitor;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,11 +62,21 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.byteCode.Access.FINAL;
+import static com.facebook.presto.byteCode.Access.PRIVATE;
 import static com.facebook.presto.byteCode.Access.PUBLIC;
+import static com.facebook.presto.byteCode.Access.STATIC;
+import static com.facebook.presto.byteCode.Access.VOLATILE;
 import static com.facebook.presto.byteCode.Access.a;
 import static com.facebook.presto.byteCode.NamedParameterDefinition.arg;
 import static com.facebook.presto.byteCode.ParameterizedType.type;
 import static com.facebook.presto.byteCode.ParameterizedType.typeFromPathName;
+import static com.facebook.presto.byteCode.expression.ByteCodeExpression.constantInt;
+import static com.facebook.presto.byteCode.expression.ByteCodeExpression.getStatic;
+import static com.facebook.presto.byteCode.expression.ByteCodeExpression.invokeStatic;
+import static com.facebook.presto.sql.gen.Bootstrap.BOOTSTRAP_METHOD;
+import static com.facebook.presto.sql.gen.Bootstrap.CALL_SITES_FIELD_NAME;
+import static com.facebook.presto.sql.gen.ByteCodeUtils.setCallSitesField;
+import static com.facebook.presto.sql.gen.SqlTypeByteCodeExpression.constantType;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class OrderingCompiler
@@ -79,8 +90,6 @@ public class OrderingCompiler
     private static final boolean RUN_ASM_VERIFIER = false; // verifier doesn't work right now
     private static final AtomicReference<String> DUMP_CLASS_FILES_TO = new AtomicReference<>();
 
-    private final Method bootstrapMethod = null;
-
     private final LoadingCache<PagesIndexComparatorCacheKey, PagesIndexOrdering> pagesIndexOrderings = CacheBuilder.newBuilder().maximumSize(1000).build(
             new CacheLoader<PagesIndexComparatorCacheKey, PagesIndexOrdering>()
             {
@@ -88,17 +97,18 @@ public class OrderingCompiler
                 public PagesIndexOrdering load(PagesIndexComparatorCacheKey key)
                         throws Exception
                 {
-                    return internalCompilePagesIndexOrdering(key.getSortChannels(), key.getSortOrders());
+                    return internalCompilePagesIndexOrdering(key.getSortTypes(), key.getSortChannels(), key.getSortOrders());
                 }
             });
 
-    public PagesIndexOrdering compilePagesIndexOrdering(List<Integer> sortChannels, List<SortOrder> sortOrders)
+    public PagesIndexOrdering compilePagesIndexOrdering(List<Type> sortTypes, List<Integer> sortChannels, List<SortOrder> sortOrders)
     {
+        checkNotNull(sortTypes, "sortTypes is null");
         checkNotNull(sortChannels, "sortChannels is null");
         checkNotNull(sortOrders, "sortOrders is null");
 
         try {
-            return pagesIndexOrderings.get(new PagesIndexComparatorCacheKey(sortChannels, sortOrders));
+            return pagesIndexOrderings.get(new PagesIndexComparatorCacheKey(sortTypes, sortChannels, sortOrders));
         }
         catch (ExecutionException | UncheckedExecutionException | ExecutionError e) {
             throw Throwables.propagate(e.getCause());
@@ -106,7 +116,7 @@ public class OrderingCompiler
     }
 
     @VisibleForTesting
-    public PagesIndexOrdering internalCompilePagesIndexOrdering(List<Integer> sortChannels, List<SortOrder> sortOrders)
+    public PagesIndexOrdering internalCompilePagesIndexOrdering(List<Type> sortTypes, List<Integer> sortChannels, List<SortOrder> sortOrders)
             throws Exception
     {
         checkNotNull(sortChannels, "sortChannels is null");
@@ -116,36 +126,45 @@ public class OrderingCompiler
         try {
             DynamicClassLoader classLoader = new DynamicClassLoader(getClass().getClassLoader());
 
-            Class<? extends PagesIndexComparator> pagesHashStrategyClass = compilePagesIndexComparator(sortChannels, sortOrders, classLoader);
+            Class<? extends PagesIndexComparator> pagesHashStrategyClass = compilePagesIndexComparator(sortTypes, sortChannels, sortOrders, classLoader);
             comparator = pagesHashStrategyClass.newInstance();
         }
         catch (Throwable e) {
             log.error(e, "Error compiling comparator for channels %s with order %s", sortChannels, sortChannels);
-            comparator = new SimplePagesIndexComparator(sortChannels, sortOrders);
+            comparator = new SimplePagesIndexComparator(sortTypes, sortChannels, sortOrders);
         }
 
         // we may want to load a separate PagesIndexOrdering for each comparator
         return new PagesIndexOrdering(comparator);
     }
 
-    private Class<? extends PagesIndexComparator> compilePagesIndexComparator(List<Integer> sortChannels, List<SortOrder> sortOrders, DynamicClassLoader classLoader)
+    private Class<? extends PagesIndexComparator> compilePagesIndexComparator(
+            List<Type> sortTypes,
+            List<Integer> sortChannels,
+            List<SortOrder> sortOrders,
+            DynamicClassLoader classLoader)
     {
-        ClassDefinition classDefinition = new ClassDefinition(new CompilerContext(bootstrapMethod),
+        CallSiteBinder callSiteBinder = new CallSiteBinder();
+
+        ClassDefinition classDefinition = new ClassDefinition(new CompilerContext(BOOTSTRAP_METHOD),
                 a(PUBLIC, FINAL),
                 typeFromPathName("PagesIndexComparator" + CLASS_ID.incrementAndGet()),
                 type(Object.class),
                 type(PagesIndexComparator.class));
 
-        generateConstructor(classDefinition);
-        generateCompareTo(classDefinition, sortChannels, sortOrders);
+        classDefinition.declareField(a(PRIVATE, STATIC, VOLATILE), CALL_SITES_FIELD_NAME, Map.class);
 
-        Class<? extends PagesIndexComparator> joinHashClass = defineClass(classDefinition, PagesIndexComparator.class, classLoader);
-        return joinHashClass;
+        generateConstructor(classDefinition);
+        generateCompareTo(classDefinition, callSiteBinder, sortTypes, sortChannels, sortOrders);
+
+        Class<? extends PagesIndexComparator> comparatorClass = defineClass(classDefinition, PagesIndexComparator.class, classLoader);
+        setCallSitesField(comparatorClass, callSiteBinder.getBindings());
+        return comparatorClass;
     }
 
     private void generateConstructor(ClassDefinition classDefinition)
     {
-        classDefinition.declareConstructor(new CompilerContext(bootstrapMethod),
+        classDefinition.declareConstructor(new CompilerContext(BOOTSTRAP_METHOD),
                 a(PUBLIC))
                 .getBody()
                 .comment("super();")
@@ -154,10 +173,10 @@ public class OrderingCompiler
                 .ret();
     }
 
-    private void generateCompareTo(ClassDefinition classDefinition, List<Integer> sortChannels, List<SortOrder> sortOrders)
+    private void generateCompareTo(ClassDefinition classDefinition, CallSiteBinder callSiteBinder, List<Type> sortTypes, List<Integer> sortChannels, List<SortOrder> sortOrders)
     {
-        CompilerContext compilerContext = new CompilerContext(bootstrapMethod);
-        MethodDefinition compareToMethod = classDefinition.declareMethod(compilerContext,
+        CompilerContext context = new CompilerContext(BOOTSTRAP_METHOD);
+        MethodDefinition compareToMethod = classDefinition.declareMethod(context,
                 a(PUBLIC),
                 "compareTo",
                 type(int.class),
@@ -165,98 +184,76 @@ public class OrderingCompiler
                 arg("leftPosition", int.class),
                 arg("rightPosition", int.class));
 
-        LocalVariableDefinition valueAddresses = compilerContext.declareVariable(LongArrayList.class, "valueAddresses");
+        Variable valueAddresses = context.declareVariable(LongArrayList.class, "valueAddresses");
         compareToMethod
                 .getBody()
                 .comment("LongArrayList valueAddresses = pagesIndex.valueAddresses")
-                .getVariable("pagesIndex")
-                .invokeVirtual(PagesIndex.class, "getValueAddresses", LongArrayList.class)
-                .putVariable(valueAddresses);
+                .append(valueAddresses.set(context.getVariable("pagesIndex").invoke("getValueAddresses", LongArrayList.class)));
 
-        LocalVariableDefinition leftPageAddress = compilerContext.declareVariable(long.class, "leftPageAddress");
+        Variable leftPageAddress = context.declareVariable(long.class, "leftPageAddress");
         compareToMethod
                 .getBody()
                 .comment("long leftPageAddress = valueAddresses.getLong(leftPosition)")
-                .getVariable(valueAddresses)
-                .getVariable("leftPosition")
-                .invokeVirtual(LongArrayList.class, "getLong", long.class, int.class)
-                .putVariable(leftPageAddress);
+                .append(leftPageAddress.set(valueAddresses.invoke("getLong", long.class, context.getVariable("leftPosition"))));
 
-        LocalVariableDefinition leftBlockIndex = compilerContext.declareVariable(int.class, "leftBlockIndex");
+        Variable leftBlockIndex = context.declareVariable(int.class, "leftBlockIndex");
         compareToMethod
                 .getBody()
                 .comment("int leftBlockIndex = decodeSliceIndex(leftPageAddress)")
-                .getVariable(leftPageAddress)
-                .invokeStatic(SyntheticAddress.class, "decodeSliceIndex", int.class, long.class)
-                .putVariable(leftBlockIndex);
+                .append(leftBlockIndex.set(invokeStatic(SyntheticAddress.class, "decodeSliceIndex", int.class, leftPageAddress)));
 
-        LocalVariableDefinition leftBlockPosition = compilerContext.declareVariable(int.class, "leftBlockPosition");
+        Variable leftBlockPosition = context.declareVariable(int.class, "leftBlockPosition");
         compareToMethod
                 .getBody()
                 .comment("int leftBlockPosition = decodePosition(leftPageAddress)")
-                .getVariable(leftPageAddress)
-                .invokeStatic(SyntheticAddress.class, "decodePosition", int.class, long.class)
-                .putVariable(leftBlockPosition);
+                .append(leftBlockPosition.set(invokeStatic(SyntheticAddress.class, "decodePosition", int.class, leftPageAddress)));
 
-        LocalVariableDefinition rightPageAddress = compilerContext.declareVariable(long.class, "rightPageAddress");
+        Variable rightPageAddress = context.declareVariable(long.class, "rightPageAddress");
         compareToMethod
                 .getBody()
                 .comment("long rightPageAddress = valueAddresses.getLong(rightPosition);")
-                .getVariable(valueAddresses)
-                .getVariable("rightPosition")
-                .invokeVirtual(LongArrayList.class, "getLong", long.class, int.class)
-                .putVariable(rightPageAddress);
+                .append(rightPageAddress.set(valueAddresses.invoke("getLong", long.class, context.getVariable("rightPosition"))));
 
-        LocalVariableDefinition rightBlockIndex = compilerContext.declareVariable(int.class, "rightBlockIndex");
+        Variable rightBlockIndex = context.declareVariable(int.class, "rightBlockIndex");
         compareToMethod
                 .getBody()
                 .comment("int rightBlockIndex = decodeSliceIndex(rightPageAddress)")
-                .getVariable(rightPageAddress)
-                .invokeStatic(SyntheticAddress.class, "decodeSliceIndex", int.class, long.class)
-                .putVariable(rightBlockIndex);
+                .append(rightBlockIndex.set(invokeStatic(SyntheticAddress.class, "decodeSliceIndex", int.class, rightPageAddress)));
 
-        LocalVariableDefinition rightBlockPosition = compilerContext.declareVariable(int.class, "rightBlockPosition");
+        Variable rightBlockPosition = context.declareVariable(int.class, "rightBlockPosition");
         compareToMethod
                 .getBody()
                 .comment("int rightBlockPosition = decodePosition(rightPageAddress)")
-                .getVariable(rightPageAddress)
-                .invokeStatic(SyntheticAddress.class, "decodePosition", int.class, long.class)
-                .putVariable(rightBlockPosition);
+                .append(rightBlockPosition.set(invokeStatic(SyntheticAddress.class, "decodePosition", int.class, rightPageAddress)));
 
         for (int i = 0; i < sortChannels.size(); i++) {
             int sortChannel = sortChannels.get(i);
             SortOrder sortOrder = sortOrders.get(i);
 
-            Block block = new Block(compilerContext)
+            Block block = new Block(context)
                     .setDescription("compare channel " + sortChannel + " " + sortOrder);
 
-            block.comment("push leftBlock -- pagesIndex.getChannel(sortChannel).get(leftBlockIndex)")
-                    .getVariable("pagesIndex")
-                    .push(sortChannel)
-                    .invokeVirtual(PagesIndex.class, "getChannel", ObjectArrayList.class, int.class)
-                    .getVariable(leftBlockIndex)
-                    .invokeVirtual(ObjectArrayList.class, "get", Object.class, int.class)
-                    .checkCast(com.facebook.presto.spi.block.Block.class);
+            Type sortType = sortTypes.get(i);
 
-            block.comment("push sortOrder")
-                    .getStaticField(SortOrder.class, sortOrder.name(), SortOrder.class);
+            ByteCodeExpression leftBlock = context.getVariable("pagesIndex")
+                    .invoke("getChannel", ObjectArrayList.class, constantInt(sortChannel))
+                    .invoke("get", Object.class, leftBlockIndex)
+                    .cast(com.facebook.presto.spi.block.Block.class);
 
-            block.comment("push leftBlockPosition")
-                    .getVariable(leftBlockPosition);
+            ByteCodeExpression rightBlock = context.getVariable("pagesIndex")
+                    .invoke("getChannel", ObjectArrayList.class, constantInt(sortChannel))
+                    .invoke("get", Object.class, rightBlockIndex)
+                    .cast(com.facebook.presto.spi.block.Block.class);
 
-            block.comment("push rightBlock -- pagesIndex.getChannel(sortChannel).get(rightBlockIndex)")
-                    .getVariable("pagesIndex")
-                    .push(sortChannel)
-                    .invokeVirtual(PagesIndex.class, "getChannel", ObjectArrayList.class, int.class)
-                    .getVariable(rightBlockIndex)
-                    .invokeVirtual(ObjectArrayList.class, "get", Object.class, int.class)
-                    .checkCast(com.facebook.presto.spi.block.Block.class);
-
-            block.comment("push rightBlockPosition")
-                    .getVariable(rightBlockPosition);
-
-            block.comment("invoke compareTo")
-                    .invokeInterface(com.facebook.presto.spi.block.Block.class, "compareTo", int.class, SortOrder.class, int.class, com.facebook.presto.spi.block.Block.class, int.class);
+            block.append(getStatic(SortOrder.class, sortOrder.name())
+                    .invoke("compareBlockValue",
+                            int.class,
+                            ImmutableList.of(Type.class, com.facebook.presto.spi.block.Block.class, int.class, com.facebook.presto.spi.block.Block.class, int.class),
+                            constantType(context, callSiteBinder, sortType),
+                            leftBlock,
+                            leftBlockPosition,
+                            rightBlock,
+                            rightBlockPosition));
 
             LabelNode equal = new LabelNode("equal");
             block.comment("if (compare != 0) return compare")
@@ -329,13 +326,20 @@ public class OrderingCompiler
 
     private static final class PagesIndexComparatorCacheKey
     {
+        private List<Type> sortTypes;
         private List<Integer> sortChannels;
         private List<SortOrder> sortOrders;
 
-        private PagesIndexComparatorCacheKey(List<Integer> sortChannels, List<SortOrder> sortOrders)
+        private PagesIndexComparatorCacheKey(List<Type> sortTypes, List<Integer> sortChannels, List<SortOrder> sortOrders)
         {
+            this.sortTypes = ImmutableList.copyOf(sortTypes);
             this.sortChannels = ImmutableList.copyOf(sortChannels);
             this.sortOrders = ImmutableList.copyOf(sortOrders);
+        }
+
+        public List<Type> getSortTypes()
+        {
+            return sortTypes;
         }
 
         public List<Integer> getSortChannels()
@@ -351,7 +355,7 @@ public class OrderingCompiler
         @Override
         public int hashCode()
         {
-            return Objects.hashCode(sortChannels, sortOrders);
+            return Objects.hashCode(sortTypes, sortChannels, sortOrders);
         }
 
         @Override
@@ -364,7 +368,9 @@ public class OrderingCompiler
                 return false;
             }
             PagesIndexComparatorCacheKey other = (PagesIndexComparatorCacheKey) obj;
-            return Objects.equal(this.sortChannels, other.sortChannels) && Objects.equal(this.sortOrders, other.sortOrders);
+            return Objects.equal(this.sortTypes, other.sortTypes) &&
+                    Objects.equal(this.sortChannels, other.sortChannels) &&
+                    Objects.equal(this.sortOrders, other.sortOrders);
         }
     }
 }

@@ -15,6 +15,7 @@ package com.facebook.presto.serde;
 
 import com.facebook.presto.block.dictionary.DictionaryBlockEncoding;
 import com.facebook.presto.operator.GroupByHash;
+import com.facebook.presto.operator.PageBuilder;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
@@ -29,14 +30,16 @@ import static com.google.common.base.Preconditions.checkState;
 public class DictionaryEncoder
         implements Encoder
 {
+    private final Type type;
     private final Encoder idWriter;
-    private Type type;
-    private GroupByHash dictionaryBuilder;
+    private final GroupByHash dictionaryBuilder;
     private boolean finished;
 
-    public DictionaryEncoder(Encoder idWriter)
+    public DictionaryEncoder(Type type, Encoder idWriter)
     {
+        this.type = type;
         this.idWriter = checkNotNull(idWriter, "idWriter is null");
+        this.dictionaryBuilder = new GroupByHash(ImmutableList.of(type), new int[] {0}, 1_000);
     }
 
     @Override
@@ -45,15 +48,10 @@ public class DictionaryEncoder
         checkNotNull(block, "block is null");
         checkState(!finished, "already finished");
 
-        if (type == null) {
-            type = block.getType();
-            dictionaryBuilder = new GroupByHash(ImmutableList.of(type), new int[] {0}, 1_000);
-        }
-
         BlockBuilder idBlockBuilder = BIGINT.createBlockBuilder(new BlockBuilderStatus());
         for (int position = 0; position < block.getPositionCount(); position++) {
             int key = dictionaryBuilder.putIfAbsent(position, block);
-            idBlockBuilder.appendLong(key);
+            BIGINT.writeLong(idBlockBuilder, key);
         }
         idWriter.append(idBlockBuilder.build());
 
@@ -63,14 +61,13 @@ public class DictionaryEncoder
     @Override
     public BlockEncoding finish()
     {
-        checkState(type != null, "nothing appended");
         checkState(!finished, "already finished");
         finished = true;
 
-        BlockBuilder blockBuilder = type.createBlockBuilder(new BlockBuilderStatus());
+        PageBuilder pageBuilder = new PageBuilder(ImmutableList.of(type));
         for (int groupId = 0; groupId < dictionaryBuilder.getGroupCount(); groupId++) {
-            dictionaryBuilder.appendValuesTo(groupId, blockBuilder);
+            dictionaryBuilder.appendValuesTo(groupId, pageBuilder, 0);
         }
-        return new DictionaryBlockEncoding(blockBuilder.build(), idWriter.finish());
+        return new DictionaryBlockEncoding(pageBuilder.build().getBlock(0), idWriter.finish());
     }
 }

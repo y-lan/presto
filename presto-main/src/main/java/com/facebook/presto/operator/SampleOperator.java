@@ -154,8 +154,13 @@ public class SampleOperator
                 }
 
                 if (repeats > 0) {
-                    page.appendTo(position, pageBuilder);
-                    pageBuilder.getBlockBuilder(sampleWeightChannel).appendLong(repeats);
+                    // copy input values to output page
+                    // NOTE: last output type is sample weight so we skip it
+                    for (int channel = 0; channel < types.size() - 1; channel++) {
+                        Type type = types.get(channel);
+                        type.appendTo(page.getBlock(channel), position, pageBuilder.getBlockBuilder(channel));
+                    }
+                    BIGINT.writeLong(pageBuilder.getBlockBuilder(sampleWeightChannel), repeats);
                 }
 
                 position++;

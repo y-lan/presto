@@ -36,12 +36,18 @@ import static io.airlift.slice.SizeOf.SIZE_OF_INT;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 
 public class ApproximateCountAggregation
-        implements AggregationFunction
+        implements InternalAggregationFunction
 {
     public static final ApproximateCountAggregation APPROXIMATE_COUNT_AGGREGATION = new ApproximateCountAggregation();
 
     private static final int COUNT_OFFSET = 0;
     private static final int SAMPLES_OFFSET = SIZE_OF_LONG;
+
+    @Override
+    public String name()
+    {
+        return "count";
+    }
 
     @Override
     public List<Type> getParameterTypes()
@@ -64,6 +70,12 @@ public class ApproximateCountAggregation
 
     @Override
     public boolean isDecomposable()
+    {
+        return true;
+    }
+
+    @Override
+    public boolean isApproximate()
     {
         return true;
     }
@@ -146,7 +158,7 @@ public class ApproximateCountAggregation
 
             for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
                 long groupId = groupIdsBlock.getGroupId(position);
-                Slice slice = intermediates.getSlice(position);
+                Slice slice = VARCHAR.getSlice(intermediates, position);
                 counts.add(groupId, slice.getLong(COUNT_OFFSET));
                 samples.add(groupId, slice.getLong(SAMPLES_OFFSET));
             }
@@ -155,7 +167,7 @@ public class ApproximateCountAggregation
         @Override
         public void evaluateIntermediate(int groupId, BlockBuilder output)
         {
-            output.appendSlice(createIntermediate(counts.get(groupId), samples.get(groupId)));
+            VARCHAR.writeSlice(output, createIntermediate(counts.get(groupId), samples.get(groupId)));
         }
 
         @Override
@@ -164,7 +176,7 @@ public class ApproximateCountAggregation
             long count = counts.get(groupId);
             long samples = this.samples.get(groupId);
             String result = formatApproximateResult(count, countError(samples, count), confidence, true);
-            output.appendSlice(Slices.utf8Slice(result));
+            VARCHAR.writeString(output, result);
         }
     }
 
@@ -237,7 +249,7 @@ public class ApproximateCountAggregation
         public void addIntermediate(Block intermediates)
         {
             for (int position = 0; position < intermediates.getPositionCount(); position++) {
-                Slice slice = intermediates.getSlice(position);
+                Slice slice = VARCHAR.getSlice(intermediates, position);
                 count += slice.getLong(COUNT_OFFSET);
                 samples += slice.getLong(SAMPLES_OFFSET);
             }
@@ -246,16 +258,20 @@ public class ApproximateCountAggregation
         @Override
         public final Block evaluateIntermediate()
         {
-            return VARCHAR.createBlockBuilder(new BlockBuilderStatus()).appendSlice(createIntermediate(count, samples)).build();
+            BlockBuilder blockBuilder = VARCHAR.createBlockBuilder(new BlockBuilderStatus());
+            VARCHAR.writeSlice(blockBuilder, createIntermediate(count, samples));
+            return blockBuilder.build();
         }
 
         @Override
         public final Block evaluateFinal()
         {
-            String result = formatApproximateResult(count, countError(samples, count), confidence, true);
-            return getFinalType().createBlockBuilder(new BlockBuilderStatus())
-                    .appendSlice(Slices.utf8Slice(result))
-                    .build();
+            Slice value = Slices.utf8Slice(formatApproximateResult(count, countError(samples, count), confidence, true));
+
+            Type finalType = getFinalType();
+            BlockBuilder blockBuilder = finalType.createBlockBuilder(new BlockBuilderStatus());
+            finalType.writeSlice(blockBuilder, value, 0, value.length());
+            return blockBuilder.build();
         }
     }
 

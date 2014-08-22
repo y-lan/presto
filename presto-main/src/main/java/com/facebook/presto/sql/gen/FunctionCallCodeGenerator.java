@@ -14,14 +14,16 @@
 package com.facebook.presto.sql.gen;
 
 import com.facebook.presto.byteCode.ByteCodeNode;
+import com.facebook.presto.metadata.FunctionInfo;
+import com.facebook.presto.metadata.FunctionRegistry;
 import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.relational.RowExpression;
+import com.facebook.presto.sql.tree.QualifiedName;
+import com.google.common.base.Preconditions;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import static com.facebook.presto.sql.gen.ByteCodeUtils.generateFunctionCall;
 
 public class FunctionCallCodeGenerator
         implements ByteCodeGenerator
@@ -29,14 +31,21 @@ public class FunctionCallCodeGenerator
     @Override
     public ByteCodeNode generateExpression(Signature signature, ByteCodeGeneratorContext context, Type returnType, List<RowExpression> arguments)
     {
+        FunctionRegistry registry = context.getRegistry();
+
+        FunctionInfo function = registry.getExactFunction(signature);
+        if (function == null) {
+            // TODO: temporary hack to deal with magic timestamp literal functions which don't have an "exact" form and need to be "resolved"
+            function = registry.resolveFunction(QualifiedName.of(signature.getName()), signature.getArgumentTypes(), false);
+        }
+
+        Preconditions.checkArgument(function != null, "Function %s not found", signature);
+
         List<ByteCodeNode> argumentsByteCode = new ArrayList<>();
         for (RowExpression argument : arguments) {
             argumentsByteCode.add(context.generate(argument));
         }
 
-        FunctionBinding binding = context.getBootstrapBinder()
-                .bindFunction(signature, context.generateGetSession(), argumentsByteCode);
-
-        return generateFunctionCall(signature, context.getContext(), binding, signature.toString());
+        return context.generateCall(function, argumentsByteCode);
     }
 }

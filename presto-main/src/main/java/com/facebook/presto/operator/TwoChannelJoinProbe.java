@@ -27,6 +27,9 @@
 package com.facebook.presto.operator;
 
 import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.type.Type;
+
+import java.util.List;
 
 // This class exists as template for code generation and for testing
 public class TwoChannelJoinProbe
@@ -35,15 +38,24 @@ public class TwoChannelJoinProbe
     public static class TwoChannelJoinProbeFactory
             implements JoinProbeFactory
     {
+        private final List<Type> types;
+
+        public TwoChannelJoinProbeFactory(List<Type> types)
+        {
+            this.types = types;
+        }
+
         @Override
         public JoinProbe createJoinProbe(LookupSource lookupSource, Page page)
         {
-            return new TwoChannelJoinProbe(lookupSource, page);
+            return new TwoChannelJoinProbe(types, lookupSource, page);
         }
     }
 
     private final LookupSource lookupSource;
     private final int positionCount;
+    private final Type typeA;
+    private final Type typeB;
     private final Block blockA;
     private final Block blockB;
     private final Block probeBlockA;
@@ -51,10 +63,12 @@ public class TwoChannelJoinProbe
     private final Block[] probeBlocks;
     private int position = -1;
 
-    public TwoChannelJoinProbe(LookupSource lookupSource, Page page)
+    public TwoChannelJoinProbe(List<Type> types, LookupSource lookupSource, Page page)
     {
         this.lookupSource = lookupSource;
         this.positionCount = page.getPositionCount();
+        this.typeA = types.get(0);
+        this.typeB = types.get(1);
         this.blockA = page.getBlock(0);
         this.blockB = page.getBlock(1);
         this.probeBlockA = blockA;
@@ -73,8 +87,8 @@ public class TwoChannelJoinProbe
     @Override
     public void appendTo(PageBuilder pageBuilder)
     {
-        blockA.appendTo(position, pageBuilder.getBlockBuilder(0));
-        blockB.appendTo(position, pageBuilder.getBlockBuilder(1));
+        typeA.appendTo(blockA, position, pageBuilder.getBlockBuilder(0));
+        typeB.appendTo(blockB, position, pageBuilder.getBlockBuilder(1));
     }
 
     @Override

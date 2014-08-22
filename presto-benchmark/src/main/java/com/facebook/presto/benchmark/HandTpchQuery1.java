@@ -115,7 +115,7 @@ public class HandTpchQuery1
     public static class TpchQuery1Operator
             implements com.facebook.presto.operator.Operator // TODO: use import when Java 7 compiler bug is fixed
     {
-        private static final ImmutableList<Type> TYPES = ImmutableList.of(
+        private static final ImmutableList<Type> TYPES = ImmutableList.<Type>of(
                 VARCHAR,
                 VARCHAR,
                 BIGINT,
@@ -245,7 +245,7 @@ public class HandTpchQuery1
                     continue;
                 }
 
-                Slice shipDate = shipDateBlock.getSlice(position);
+                Slice shipDate = VARCHAR.getSlice(shipDateBlock, position);
 
                 // where
                 //     shipdate <= '1998-09-02'
@@ -262,19 +262,19 @@ public class HandTpchQuery1
                         pageBuilder.getBlockBuilder(0).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(0).appendSlice(returnFlagBlock.getSlice(position));
+                        VARCHAR.appendTo(returnFlagBlock, position, pageBuilder.getBlockBuilder(0));
                     }
                     if (lineStatusBlock.isNull(position)) {
                         pageBuilder.getBlockBuilder(1).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(1).appendSlice(lineStatusBlock.getSlice(position));
+                        VARCHAR.appendTo(lineStatusBlock, position, pageBuilder.getBlockBuilder(1));
                     }
 
-                    long quantity = quantityBlock.getLong(position);
-                    double extendedPrice = extendedPriceBlock.getDouble(position);
-                    double discount = discountBlock.getDouble(position);
-                    double tax = taxBlock.getDouble(position);
+                    long quantity = BIGINT.getLong(quantityBlock, position);
+                    double extendedPrice = DOUBLE.getDouble(extendedPriceBlock, position);
+                    double discount = DOUBLE.getDouble(discountBlock, position);
+                    double tax = DOUBLE.getDouble(taxBlock, position);
 
                     boolean quantityIsNull = quantityBlock.isNull(position);
                     boolean extendedPriceIsNull = extendedPriceBlock.isNull(position);
@@ -285,35 +285,35 @@ public class HandTpchQuery1
                         pageBuilder.getBlockBuilder(2).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(2).appendLong(quantity);
+                        BIGINT.writeLong(pageBuilder.getBlockBuilder(2), quantity);
                     }
 
                     if (extendedPriceIsNull) {
                         pageBuilder.getBlockBuilder(3).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(3).appendDouble(extendedPrice);
+                        DOUBLE.writeDouble(pageBuilder.getBlockBuilder(3), extendedPrice);
                     }
 
                     if (extendedPriceIsNull || discountIsNull) {
                         pageBuilder.getBlockBuilder(4).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(4).appendDouble(extendedPrice * (1 - discount));
+                        DOUBLE.writeDouble(pageBuilder.getBlockBuilder(4), extendedPrice * (1 - discount));
                     }
 
                     if (extendedPriceIsNull || discountIsNull || taxIsNull) {
                         pageBuilder.getBlockBuilder(5).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(5).appendDouble(extendedPrice * (1 - discount) * (1 + tax));
+                        DOUBLE.writeDouble(pageBuilder.getBlockBuilder(5), extendedPrice * (1 - discount) * (1 + tax));
                     }
 
                     if (discountIsNull) {
                         pageBuilder.getBlockBuilder(6).appendNull();
                     }
                     else {
-                        pageBuilder.getBlockBuilder(6).appendDouble(discount);
+                        DOUBLE.writeDouble(pageBuilder.getBlockBuilder(6), discount);
                     }
                 }
             }

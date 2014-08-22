@@ -21,13 +21,12 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
 import java.util.List;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
-import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -35,7 +34,7 @@ import static com.google.common.base.Preconditions.checkState;
 public class TableWriterOperator
         implements Operator
 {
-    public static final List<Type> TYPES = ImmutableList.of(BIGINT, VARCHAR);
+    public static final List<Type> TYPES = ImmutableList.<Type>of(BIGINT, VARCHAR);
 
     public static class TableWriterOperatorFactory
             implements OperatorFactory
@@ -167,20 +166,18 @@ public class TableWriterOperator
             blocks[outputChannel] = page.getBlock(inputChannels.get(outputChannel));
         }
 
-        int rows = 0;
         for (int position = 0; position < page.getPositionCount(); position++) {
             long sampleWeight = 1;
             if (sampleWeightBlock != null) {
-                sampleWeight = sampleWeightBlock.getLong(position);
+                sampleWeight = BIGINT.getLong(sampleWeightBlock, position);
             }
-            rows += sampleWeight;
             recordSink.beginRecord(sampleWeight);
             for (int i = 0; i < blocks.length; i++) {
                 writeField(position, blocks[i], recordTypes.get(i));
             }
             recordSink.finishRecord();
         }
-        rowCount += rows;
+        rowCount += page.getPositionCount();
     }
 
     private void writeField(int position, Block block, Type type)
@@ -190,17 +187,17 @@ public class TableWriterOperator
             return;
         }
 
-        if (type.equals(BOOLEAN)) {
-            recordSink.appendBoolean(block.getBoolean(position));
+        if (type.getJavaType() == boolean.class) {
+            recordSink.appendBoolean(type.getBoolean(block, position));
         }
-        else if (type.equals(BIGINT)) {
-            recordSink.appendLong(block.getLong(position));
+        else if (type.getJavaType() == long.class) {
+            recordSink.appendLong(type.getLong(block, position));
         }
-        else if (type.equals(DOUBLE)) {
-            recordSink.appendDouble(block.getDouble(position));
+        else if (type.getJavaType() == double.class) {
+            recordSink.appendDouble(type.getDouble(block, position));
         }
-        else if (type.equals(VARCHAR)) {
-            recordSink.appendString(block.getSlice(position).getBytes());
+        else if (type.getJavaType() == Slice.class) {
+            recordSink.appendString(type.getSlice(block, position).getBytes());
         }
         else {
             throw new AssertionError("unimplemented type: " + type);
@@ -218,8 +215,8 @@ public class TableWriterOperator
         String fragment = recordSink.commit();
 
         PageBuilder page = new PageBuilder(TYPES);
-        page.getBlockBuilder(0).appendLong(rowCount);
-        page.getBlockBuilder(1).appendSlice(Slices.utf8Slice(fragment));
+        BIGINT.writeLong(page.getBlockBuilder(0), rowCount);
+        VARCHAR.writeSlice(page.getBlockBuilder(1), Slices.utf8Slice(fragment));
         return page.build();
     }
 }

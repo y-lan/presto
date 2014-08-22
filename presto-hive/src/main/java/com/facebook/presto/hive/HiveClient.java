@@ -21,8 +21,8 @@ import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorColumnHandle;
 import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.ConnectorIndexHandle;
+import com.facebook.presto.spi.ConnectorInsertTableHandle;
 import com.facebook.presto.spi.ConnectorMetadata;
-import com.facebook.presto.spi.ConnectorOutputHandleResolver;
 import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorPartition;
 import com.facebook.presto.spi.ConnectorPartitionResult;
@@ -65,7 +65,6 @@ import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
 import io.airlift.units.DataSize;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.metastore.ProtectMode;
 import org.apache.hadoop.hive.metastore.TableType;
@@ -109,7 +108,7 @@ import static com.facebook.presto.hive.HiveUtil.getTableStructFields;
 import static com.facebook.presto.hive.HiveUtil.parseHiveTimestamp;
 import static com.facebook.presto.hive.UnpartitionedPartition.UNPARTITIONED_PARTITION;
 import static com.facebook.presto.hive.util.Types.checkType;
-import static com.facebook.presto.spi.StandardErrorCode.CANNOT_DROP_TABLE;
+import static com.facebook.presto.spi.StandardErrorCode.PERMISSION_DENIED;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
@@ -135,7 +134,7 @@ import static org.apache.hadoop.hive.serde.serdeConstants.STRING_TYPE_NAME;
 
 @SuppressWarnings("deprecation")
 public class HiveClient
-        implements ConnectorMetadata, ConnectorSplitManager, ConnectorRecordSetProvider, ConnectorRecordSinkProvider, ConnectorHandleResolver, ConnectorOutputHandleResolver
+        implements ConnectorMetadata, ConnectorSplitManager, ConnectorRecordSetProvider, ConnectorRecordSinkProvider, ConnectorHandleResolver
 {
     static {
         HadoopNative.requireHadoopNative();
@@ -152,6 +151,7 @@ public class HiveClient
     private final int minPartitionBatchSize;
     private final int maxPartitionBatchSize;
     private final boolean allowDropTable;
+    private final boolean allowRenameTable;
     private final HiveMetastore metastore;
     private final NamenodeStats namenodeStats;
     private final HdfsEnvironment hdfsEnvironment;
@@ -191,6 +191,7 @@ public class HiveClient
                 hiveClientConfig.getMaxInitialSplitSize(),
                 hiveClientConfig.getMaxInitialSplits(),
                 hiveClientConfig.getAllowDropTable(),
+                hiveClientConfig.getAllowRenameTable(),
                 hiveClientConfig.getHiveStorageFormat(),
                 false);
     }
@@ -210,6 +211,7 @@ public class HiveClient
             DataSize maxInitialSplitSize,
             int maxInitialSplits,
             boolean allowDropTable,
+            boolean allowRenameTable,
             HiveStorageFormat hiveStorageFormat,
             boolean recursiveDfsWalkerEnabled)
     {
@@ -224,6 +226,7 @@ public class HiveClient
         this.maxInitialSplitSize = checkNotNull(maxInitialSplitSize, "maxInitialSplitSize is null");
         this.maxInitialSplits = maxInitialSplits;
         this.allowDropTable = allowDropTable;
+        this.allowRenameTable = allowRenameTable;
 
         this.metastore = checkNotNull(metastore, "metastore is null");
         this.hdfsEnvironment = checkNotNull(hdfsEnvironment, "hdfsEnvironment is null");
@@ -454,19 +457,30 @@ public class HiveClient
     }
 
     @Override
+    public void renameTable(ConnectorTableHandle tableHandle, SchemaTableName newTableName)
+    {
+        if (!allowRenameTable) {
+            throw new PrestoException(PERMISSION_DENIED.toErrorCode(), "Renaming tables is disabled in this Hive catalog");
+        }
+
+        HiveTableHandle handle = checkType(tableHandle, HiveTableHandle.class, "tableHandle");
+        metastore.renameTable(handle.getSchemaName(), handle.getTableName(), newTableName.getSchemaName(), newTableName.getTableName());
+    }
+
+    @Override
     public void dropTable(ConnectorTableHandle tableHandle)
     {
         HiveTableHandle handle = checkType(tableHandle, HiveTableHandle.class, "tableHandle");
         SchemaTableName tableName = getTableName(tableHandle);
 
         if (!allowDropTable) {
-            throw new PrestoException(CANNOT_DROP_TABLE.toErrorCode(), "DROP TABLE is disabled in this Hive catalog");
+            throw new PrestoException(PERMISSION_DENIED.toErrorCode(), "DROP TABLE is disabled in this Hive catalog");
         }
 
         try {
             Table table = metastore.getTable(handle.getSchemaName(), handle.getTableName());
             if (!handle.getSession().getUser().equals(table.getOwner())) {
-                throw new PrestoException(CANNOT_DROP_TABLE.toErrorCode(), format("Unable to drop table '%s': owner of the table is different from session user", table));
+                throw new PrestoException(PERMISSION_DENIED.toErrorCode(), format("Unable to drop table '%s': owner of the table is different from session user", table));
             }
             metastore.dropTable(handle.getSchemaName(), handle.getTableName());
         }
@@ -625,6 +639,12 @@ public class HiveClient
         return new HiveRecordSink(handle, target, conf);
     }
 
+    @Override
+    public RecordSink getRecordSink(ConnectorInsertTableHandle tableHandle)
+    {
+        throw new UnsupportedOperationException();
+    }
+
     private Database getDatabase(String database)
     {
         try {
@@ -639,7 +659,7 @@ public class HiveClient
     {
         try {
             // skip using temporary directory for S3
-            return !(getFileSystem(path) instanceof PrestoS3FileSystem);
+            return !(hdfsEnvironment.getFileSystem(path) instanceof PrestoS3FileSystem);
         }
         catch (IOException e) {
             throw new RuntimeException("Failed checking path: " + path, e);
@@ -649,7 +669,7 @@ public class HiveClient
     private boolean pathExists(Path path)
     {
         try {
-            return getFileSystem(path).exists(path);
+            return hdfsEnvironment.getFileSystem(path).exists(path);
         }
         catch (IOException e) {
             throw new RuntimeException("Failed checking path: " + path, e);
@@ -659,7 +679,7 @@ public class HiveClient
     private boolean isDirectory(Path path)
     {
         try {
-            return getFileSystem(path).isDirectory(path);
+            return hdfsEnvironment.getFileSystem(path).isDirectory(path);
         }
         catch (IOException e) {
             throw new RuntimeException("Failed checking path: " + path, e);
@@ -669,7 +689,7 @@ public class HiveClient
     private void createDirectories(Path path)
     {
         try {
-            if (!getFileSystem(path).mkdirs(path)) {
+            if (!hdfsEnvironment.getFileSystem(path).mkdirs(path)) {
                 throw new IOException("mkdirs returned false");
             }
         }
@@ -678,16 +698,10 @@ public class HiveClient
         }
     }
 
-    private FileSystem getFileSystem(Path path)
-            throws IOException
-    {
-        return path.getFileSystem(hdfsEnvironment.getConfiguration(path));
-    }
-
     private void rename(Path source, Path target)
     {
         try {
-            if (!getFileSystem(source).rename(source, target)) {
+            if (!hdfsEnvironment.getFileSystem(source).rename(source, target)) {
                 throw new IOException("rename returned false");
             }
         }
@@ -793,6 +807,18 @@ public class HiveClient
         }
 
         return views.build();
+    }
+
+    @Override
+    public ConnectorInsertTableHandle beginInsert(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void commitInsert(ConnectorInsertTableHandle insertHandle, Collection<String> fragments)
+    {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -1026,6 +1052,12 @@ public class HiveClient
     }
 
     @Override
+    public boolean canHandle(ConnectorInsertTableHandle tableHandle)
+    {
+        return false;
+    }
+
+    @Override
     public boolean canHandle(ConnectorIndexHandle indexHandle)
     {
         return false;
@@ -1057,6 +1089,12 @@ public class HiveClient
 
     @Override
     public Class<? extends ConnectorIndexHandle> getIndexHandleClass()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Class<? extends ConnectorInsertTableHandle> getInsertTableHandleClass()
     {
         throw new UnsupportedOperationException();
     }

@@ -48,6 +48,7 @@ public class HiveClientConfig
     private int maxInitialSplits = 200;
     private DataSize maxInitialSplitSize;
     private boolean allowDropTable;
+    private boolean allowRenameTable;
 
     private Duration metastoreCacheTtl = new Duration(1, TimeUnit.HOURS);
     private Duration metastoreRefreshInterval = new Duration(2, TimeUnit.MINUTES);
@@ -58,6 +59,7 @@ public class HiveClientConfig
     private Duration dfsTimeout = new Duration(10, TimeUnit.SECONDS);
     private Duration dfsConnectTimeout = new Duration(500, TimeUnit.MILLISECONDS);
     private int dfsConnectMaxRetries = 5;
+    private boolean verifyChecksum = true;
 
     private String domainSocketPath;
 
@@ -68,6 +70,7 @@ public class HiveClientConfig
     private int s3MaxErrorRetries = 10;
     private Duration s3MaxBackoffTime = new Duration(10, TimeUnit.MINUTES);
     private Duration s3ConnectTimeout = new Duration(5, TimeUnit.SECONDS);
+    private int s3MaxConnections = 500;
     private File s3StagingDirectory = new File(StandardSystemProperty.JAVA_IO_TMPDIR.value());
 
     private HiveStorageFormat hiveStorageFormat = HiveStorageFormat.RCBINARY;
@@ -169,6 +172,19 @@ public class HiveClientConfig
     public HiveClientConfig setMaxGlobalSplitIteratorThreads(int maxGlobalSplitIteratorThreads)
     {
         this.maxGlobalSplitIteratorThreads = maxGlobalSplitIteratorThreads;
+        return this;
+    }
+
+    public boolean getAllowRenameTable()
+    {
+        return this.allowRenameTable;
+    }
+
+    @Config("hive.allow-rename-table")
+    @ConfigDescription("Allow hive connector to rename table")
+    public HiveClientConfig setAllowRenameTable(boolean allowRenameTable)
+    {
+        this.allowRenameTable = allowRenameTable;
         return this;
     }
 
@@ -358,6 +374,18 @@ public class HiveClientConfig
         return this;
     }
 
+    public boolean isVerifyChecksum()
+    {
+        return verifyChecksum;
+    }
+
+    @Config("hive.dfs.verify-checksum")
+    public HiveClientConfig setVerifyChecksum(boolean verifyChecksum)
+    {
+        this.verifyChecksum = verifyChecksum;
+        return this;
+    }
+
     public String getS3AwsAccessKey()
     {
         return s3AwsAccessKey;
@@ -445,6 +473,19 @@ public class HiveClientConfig
     public HiveClientConfig setS3ConnectTimeout(Duration s3ConnectTimeout)
     {
         this.s3ConnectTimeout = s3ConnectTimeout;
+        return this;
+    }
+
+    @Min(1)
+    public int getS3MaxConnections()
+    {
+        return s3MaxConnections;
+    }
+
+    @Config("hive.s3.max-connections")
+    public HiveClientConfig setS3MaxConnections(int s3MaxConnections)
+    {
+        this.s3MaxConnections = s3MaxConnections;
         return this;
     }
 

@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.spi.block;
 
-import com.facebook.presto.spi.type.FixedWidthType;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.SizeOf;
 import io.airlift.slice.Slice;
@@ -21,6 +20,13 @@ import io.airlift.slice.SliceOutput;
 import io.airlift.slice.Slices;
 
 import java.util.Arrays;
+
+import static io.airlift.slice.SizeOf.SIZE_OF_BYTE;
+import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
+import static io.airlift.slice.SizeOf.SIZE_OF_FLOAT;
+import static io.airlift.slice.SizeOf.SIZE_OF_INT;
+import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
+import static io.airlift.slice.SizeOf.SIZE_OF_SHORT;
 
 public class FixedWidthBlockBuilder
         extends AbstractFixedWidthBlock
@@ -31,20 +37,22 @@ public class FixedWidthBlockBuilder
     private boolean[] valueIsNull;
     private int positionCount;
 
-    public FixedWidthBlockBuilder(FixedWidthType type, BlockBuilderStatus blockBuilderStatus)
+    private int currentEntrySize;
+
+    public FixedWidthBlockBuilder(int fixedSize, BlockBuilderStatus blockBuilderStatus)
     {
-        super(type);
+        super(fixedSize);
 
         this.blockBuilderStatus = blockBuilderStatus;
         this.sliceOutput = new DynamicSliceOutput(blockBuilderStatus.getMaxBlockSizeInBytes());
         this.valueIsNull = new boolean[1024];
     }
 
-    public FixedWidthBlockBuilder(FixedWidthType type, int positionCount)
+    public FixedWidthBlockBuilder(int fixedSize, int positionCount)
     {
-        super(type);
+        super(fixedSize);
 
-        Slice slice = Slices.allocate(entrySize * positionCount);
+        Slice slice = Slices.allocate(fixedSize * positionCount);
 
         this.blockBuilderStatus = new BlockBuilderStatus(slice.length(), slice.length());
         this.sliceOutput = slice.getOutput();
@@ -87,54 +95,82 @@ public class FixedWidthBlockBuilder
     }
 
     @Override
-    public BlockBuilder appendBoolean(boolean value)
+    public BlockBuilder writeByte(int value)
     {
-        type.writeBoolean(sliceOutput, value);
-        entryAdded(false);
+        sliceOutput.writeByte(value);
+        currentEntrySize += SIZE_OF_BYTE;
         return this;
     }
 
     @Override
-    public BlockBuilder appendLong(long value)
+    public BlockBuilder writeShort(int value)
     {
-        type.writeLong(sliceOutput, value);
-        entryAdded(false);
+        sliceOutput.writeShort(value);
+        currentEntrySize += SIZE_OF_SHORT;
         return this;
     }
 
     @Override
-    public BlockBuilder appendDouble(double value)
+    public BlockBuilder writeInt(int value)
     {
-        type.writeDouble(sliceOutput, value);
-        entryAdded(false);
+        sliceOutput.writeInt(value);
+        currentEntrySize += SIZE_OF_INT;
         return this;
     }
 
     @Override
-    public BlockBuilder appendSlice(Slice value)
+    public BlockBuilder writeLong(long value)
     {
-        return appendSlice(value, 0, value.length());
+        sliceOutput.writeLong(value);
+        currentEntrySize += SIZE_OF_LONG;
+        return this;
     }
 
     @Override
-    public BlockBuilder appendSlice(Slice value, int offset, int length)
+    public BlockBuilder writeFloat(float value)
     {
-        if (length != type.getFixedSize()) {
-            throw new IllegalArgumentException("length must be " + type.getFixedSize() + " but is " + length);
+        sliceOutput.writeFloat(value);
+        currentEntrySize += SIZE_OF_FLOAT;
+        return this;
+    }
+
+    @Override
+    public BlockBuilder writeDouble(double value)
+    {
+        sliceOutput.writeDouble(value);
+        currentEntrySize += SIZE_OF_DOUBLE;
+        return this;
+    }
+
+    @Override
+    public BlockBuilder writeBytes(Slice source, int sourceIndex, int length)
+    {
+        sliceOutput.writeBytes(source, sourceIndex, length);
+        currentEntrySize += length;
+        return this;
+    }
+
+    @Override
+    public BlockBuilder closeEntry()
+    {
+        if (currentEntrySize != fixedSize) {
+            throw new IllegalStateException("Expected entry size to be exactly " + fixedSize + " but was " + currentEntrySize);
         }
 
-        type.writeSlice(sliceOutput, value, offset);
-
         entryAdded(false);
-
+        currentEntrySize = 0;
         return this;
     }
 
     @Override
     public BlockBuilder appendNull()
     {
+        if (currentEntrySize > 0) {
+            throw new IllegalStateException("Current entry must be closed before a null can be written");
+        }
+
         // fixed width is always written regardless of null flag
-        sliceOutput.writeZero(type.getFixedSize());
+        sliceOutput.writeZero(fixedSize);
 
         entryAdded(true);
 
@@ -149,7 +185,7 @@ public class FixedWidthBlockBuilder
         valueIsNull[positionCount] = isNull;
 
         positionCount++;
-        blockBuilderStatus.addBytes(entrySize);
+        blockBuilderStatus.addBytes(fixedSize);
         if (sliceOutput.size() >= blockBuilderStatus.getMaxBlockSizeInBytes()) {
             blockBuilderStatus.setFull();
         }
@@ -169,15 +205,18 @@ public class FixedWidthBlockBuilder
             throw new IndexOutOfBoundsException("Invalid position " + positionOffset + " in block with " + positionCount + " positions");
         }
 
-        Slice newSlice = sliceOutput.slice().slice(positionOffset * entrySize, length * entrySize);
+        Slice newSlice = sliceOutput.slice().slice(positionOffset * fixedSize, length * fixedSize);
         boolean[] newValueIsNull = Arrays.copyOfRange(valueIsNull, positionOffset, positionOffset + length);
-        return new FixedWidthBlock(type, length, newSlice, newValueIsNull);
+        return new FixedWidthBlock(fixedSize, length, newSlice, newValueIsNull);
     }
 
     @Override
     public Block build()
     {
-        return new FixedWidthBlock(type, positionCount, sliceOutput.slice(), valueIsNull);
+        if (currentEntrySize > 0) {
+            throw new IllegalStateException("Current entry must be closed before the block can be built");
+        }
+        return new FixedWidthBlock(fixedSize, positionCount, sliceOutput.slice(), valueIsNull);
     }
 
     @Override
@@ -185,8 +224,8 @@ public class FixedWidthBlockBuilder
     {
         StringBuilder sb = new StringBuilder("FixedWidthBlockBuilder{");
         sb.append("positionCount=").append(positionCount);
+        sb.append(", fixedSize=").append(fixedSize);
         sb.append(", size=").append(sliceOutput.size());
-        sb.append(", type=").append(type);
         sb.append('}');
         return sb.toString();
     }

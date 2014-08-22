@@ -13,17 +13,13 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockEncoding;
-import com.facebook.presto.spi.block.SortOrder;
-import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Objects;
 import io.airlift.slice.Slice;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class GroupByIdBlock
@@ -35,7 +31,6 @@ public class GroupByIdBlock
     public GroupByIdBlock(long groupCount, Block block)
     {
         checkNotNull(block, "block is null");
-        checkArgument(block.getType().equals(BIGINT));
         this.groupCount = groupCount;
         this.block = block;
     }
@@ -47,7 +42,7 @@ public class GroupByIdBlock
 
     public long getGroupId(int position)
     {
-        return block.getLong(position);
+        return BIGINT.getLong(block, position);
     }
 
     @Override
@@ -57,33 +52,87 @@ public class GroupByIdBlock
     }
 
     @Override
-    public boolean getBoolean(int position)
+    public int getLength(int position)
     {
-        throw new UnsupportedOperationException();
+        return block.getLength(position);
     }
 
     @Override
-    public long getLong(int position)
+    public byte getByte(int position, int offset)
     {
-        return block.getLong(position);
+        return block.getByte(position, offset);
     }
 
     @Override
-    public double getDouble(int position)
+    public short getShort(int position, int offset)
     {
-        throw new UnsupportedOperationException();
+        return block.getShort(position, offset);
     }
 
     @Override
-    public Object getObjectValue(ConnectorSession session, int position)
+    public int getInt(int position, int offset)
     {
-        return block.getObjectValue(session, position);
+        return block.getInt(position, offset);
     }
 
     @Override
-    public Slice getSlice(int position)
+    public long getLong(int position, int offset)
     {
-        throw new UnsupportedOperationException();
+        return block.getLong(position, offset);
+    }
+
+    @Override
+    public float getFloat(int position, int offset)
+    {
+        return block.getFloat(position, offset);
+    }
+
+    @Override
+    public double getDouble(int position, int offset)
+    {
+        return block.getDouble(position, offset);
+    }
+
+    @Override
+    public Slice getSlice(int position, int offset, int length)
+    {
+        return block.getSlice(position, offset, length);
+    }
+
+    @Override
+    public boolean bytesEqual(int position, int offset, Slice otherSlice, int otherOffset, int length)
+    {
+        return block.bytesEqual(position, offset, otherSlice, otherOffset, length);
+    }
+
+    @Override
+    public int bytesCompare(int position, int offset, int length, Slice otherSlice, int otherOffset, int otherLength)
+    {
+        return block.bytesCompare(position, offset, length, otherSlice, otherOffset, otherLength);
+    }
+
+    @Override
+    public void writeBytesTo(int position, int offset, int length, BlockBuilder blockBuilder)
+    {
+        block.writeBytesTo(position, offset, length, blockBuilder);
+    }
+
+    @Override
+    public boolean equals(int position, int offset, Block otherBlock, int otherPosition, int otherOffset, int length)
+    {
+        return block.equals(position, offset, otherBlock, otherPosition, otherOffset, length);
+    }
+
+    @Override
+    public int hash(int position, int offset, int length)
+    {
+        return block.hash(position, offset, length);
+    }
+
+    @Override
+    public int compareTo(int leftPosition, int leftOffset, int leftLength, Block rightBlock, int rightPosition, int rightOffset, int rightLength)
+    {
+        return block.compareTo(leftPosition, leftOffset, leftLength, rightBlock, rightPosition, rightOffset, rightLength);
     }
 
     @Override
@@ -96,48 +145,6 @@ public class GroupByIdBlock
     public boolean isNull(int position)
     {
         return block.isNull(position);
-    }
-
-    @Override
-    public boolean equalTo(int position, Block otherBlock, int otherPosition)
-    {
-        return block.equalTo(position, otherBlock, otherPosition);
-    }
-
-    @Override
-    public boolean equalTo(int position, Slice otherSlice, int otherOffset, int otherLength)
-    {
-        return block.equalTo(position, otherSlice, otherOffset, otherLength);
-    }
-
-    @Override
-    public int hash(int position)
-    {
-        return block.hash(position);
-    }
-
-    @Override
-    public int compareTo(SortOrder sortOrder, int position, Block otherBlock, int otherPosition)
-    {
-        return block.compareTo(sortOrder, position, otherBlock, otherPosition);
-    }
-
-    @Override
-    public int compareTo(int position, Slice otherSlice, int otherOffset, int otherLength)
-    {
-        return block.compareTo(position, otherSlice, otherOffset, otherLength);
-    }
-
-    @Override
-    public void appendTo(int position, BlockBuilder blockBuilder)
-    {
-        block.appendTo(position, blockBuilder);
-    }
-
-    @Override
-    public Type getType()
-    {
-        return block.getType();
     }
 
     @Override

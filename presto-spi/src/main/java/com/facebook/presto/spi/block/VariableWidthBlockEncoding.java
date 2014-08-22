@@ -13,44 +13,26 @@
  */
 package com.facebook.presto.spi.block;
 
-import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
-import com.facebook.presto.spi.type.VariableWidthType;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceInput;
 import io.airlift.slice.SliceOutput;
 
-import static java.util.Objects.requireNonNull;
-
 public class VariableWidthBlockEncoding
         implements BlockEncoding
 {
-    private final VariableWidthType type;
-
-    public VariableWidthBlockEncoding(Type type)
-    {
-        this.type = (VariableWidthType) requireNonNull(type, "type is null");
-    }
+    public static final BlockEncodingFactory<VariableWidthBlockEncoding> FACTORY = new VariableWidthBlockEncodingFactory();
+    private static final String NAME = "VARIABLE_WIDTH";
 
     @Override
     public String getName()
     {
-        return type.getName();
-    }
-
-    @Override
-    public Type getType()
-    {
-        return type;
+        return NAME;
     }
 
     @Override
     public void writeBlock(SliceOutput sliceOutput, Block block)
     {
-        if (!block.getType().equals(type)) {
-            throw new IllegalArgumentException("Invalid block");
-        }
-
         // The down casts here are safe because it is the block itself the provides this encoding implementation.
         AbstractVariableWidthBlock variableWidthBlock = (AbstractVariableWidthBlock) block;
 
@@ -60,7 +42,7 @@ public class VariableWidthBlockEncoding
         // offsets
         int totalLength = 0;
         for (int position = 0; position < positionCount; position++) {
-            int length = variableWidthBlock.getPositionLength(position);
+            int length = variableWidthBlock.getLength(position);
             sliceOutput.appendInt(length);
             totalLength += length;
         }
@@ -135,29 +117,22 @@ public class VariableWidthBlockEncoding
         int blockSize = sliceInput.readInt();
         Slice slice = sliceInput.readSlice(blockSize);
 
-        return new VariableWidthBlock(type, positionCount, slice, offsets, valueIsNull);
+        return new VariableWidthBlock(positionCount, slice, offsets, valueIsNull);
     }
 
     public static class VariableWidthBlockEncodingFactory
             implements BlockEncodingFactory<VariableWidthBlockEncoding>
     {
-        private final Type type;
-
-        public VariableWidthBlockEncodingFactory(Type type)
-        {
-            this.type = requireNonNull(type, "type is null");
-        }
-
         @Override
         public String getName()
         {
-            return type.getName();
+            return NAME;
         }
 
         @Override
         public VariableWidthBlockEncoding readEncoding(TypeManager manager, BlockEncodingSerde serde, SliceInput input)
         {
-            return new VariableWidthBlockEncoding(type);
+            return new VariableWidthBlockEncoding();
         }
 
         @Override

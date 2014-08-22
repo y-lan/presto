@@ -17,18 +17,28 @@ import com.facebook.presto.byteCode.Block;
 import com.facebook.presto.byteCode.ByteCodeNode;
 import com.facebook.presto.byteCode.CompilerContext;
 import com.facebook.presto.byteCode.control.IfStatement;
+import com.facebook.presto.byteCode.expression.ByteCodeExpression;
 import com.facebook.presto.byteCode.instruction.LabelNode;
+import com.facebook.presto.metadata.FunctionInfo;
 import com.facebook.presto.metadata.Signature;
+import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.base.Joiner;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Primitives;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static com.facebook.presto.byteCode.OpCodes.NOP;
+import static com.facebook.presto.byteCode.expression.ByteCodeExpression.invokeDynamic;
+import static com.facebook.presto.sql.gen.Bootstrap.CALL_SITES_FIELD_NAME;
 import static java.lang.String.format;
 
 public class ByteCodeUtils
@@ -90,6 +100,25 @@ public class ByteCodeUtils
         return new IfStatement(context, comment, nullCheck, isNull, NOP);
     }
 
+    public static ByteCodeNode boxPrimitive(CompilerContext context, Class<?> type)
+    {
+        Block block = new Block(context).comment("box primitive");
+        if (type == long.class) {
+            return block.invokeStatic(Long.class, "valueOf", Long.class, long.class);
+        }
+        if (type == double.class) {
+            return block.invokeStatic(Double.class, "valueOf", Double.class, double.class);
+        }
+        if (type == boolean.class) {
+            return block.invokeStatic(Boolean.class, "valueOf", Boolean.class, boolean.class);
+        }
+        if (type.isPrimitive()) {
+            throw new UnsupportedOperationException("not yet implemented: " + type);
+        }
+
+        return NOP;
+    }
+
     public static ByteCodeNode unboxPrimitive(CompilerContext context, Class<?> unboxedType)
     {
         Block block = new Block(context).comment("unbox primitive");
@@ -105,25 +134,51 @@ public class ByteCodeUtils
         throw new UnsupportedOperationException("not yet implemented: " + unboxedType);
     }
 
-    public static ByteCodeNode generateFunctionCall(Signature signature, CompilerContext context, FunctionBinding functionBinding, String comment)
+    public static ByteCodeExpression invokeMethod(CompilerContext context, CallSiteBinder callSiteBinder, MethodHandle method)
     {
-        List<ByteCodeNode> arguments = functionBinding.getArguments();
-        MethodType methodType = functionBinding.getCallSite().type();
+        Binding binding = callSiteBinder.bind(method);
+        return invokeDynamic("call_" + binding.getBindingId(), binding.getType(), context.getDefaultBootstrapMethod(), binding.getBindingId());
+    }
+
+    public static ByteCodeExpression loadConstant(CompilerContext context, CallSiteBinder callSiteBinder, Object constant, Class<?> type)
+    {
+        Binding binding = callSiteBinder.bind(MethodHandles.constant(type, constant));
+        return loadConstant(context, binding);
+    }
+
+    public static ByteCodeExpression loadConstant(CompilerContext context, Binding binding)
+    {
+        return invokeDynamic("constant_" + binding.getBindingId(), binding.getType(), context.getDefaultBootstrapMethod(), binding.getBindingId());
+    }
+
+    public static ByteCodeNode generateInvocation(CompilerContext context, FunctionInfo function, ByteCodeNode getSessionByteCode, List<ByteCodeNode> arguments, Binding binding)
+    {
+        MethodType methodType = binding.getType();
+
+        Signature signature = function.getSignature();
         Class<?> unboxedReturnType = Primitives.unwrap(methodType.returnType());
 
         LabelNode end = new LabelNode("end");
         Block block = new Block(context)
-                .setDescription("invoke " + signature)
-                .comment(comment);
-        ArrayList<Class<?>> stackTypes = new ArrayList<>();
-        for (int i = 0; i < arguments.size(); i++) {
-            block.append(arguments.get(i));
-            stackTypes.add(methodType.parameterType(i));
-            block.append(ByteCodeUtils.ifWasNullPopAndGoto(context, end, unboxedReturnType, Lists.reverse(stackTypes)));
-        }
-        block.invokeDynamic(functionBinding.getName(), methodType, functionBinding.getBindingId());
+                .setDescription("invoke " + signature);
 
-        if (functionBinding.isNullable()) {
+        ArrayList<Class<?>> stackTypes = new ArrayList<>();
+
+        int index = 0;
+        for (Class<?> type : methodType.parameterArray()) {
+            stackTypes.add(type);
+            if (type == ConnectorSession.class) {
+                block.append(getSessionByteCode);
+            }
+            else {
+                block.append(arguments.get(index));
+                index++;
+                block.append(ByteCodeUtils.ifWasNullPopAndGoto(context, end, unboxedReturnType, Lists.reverse(stackTypes)));
+            }
+        }
+        block.append(invoke(context, binding));
+
+        if (function.isNullable()) {
             if (unboxedReturnType.isPrimitive()) {
                 LabelNode notNull = new LabelNode("notNull");
                 block.dup(methodType.returnType())
@@ -145,5 +200,23 @@ public class ByteCodeUtils
         block.visitLabel(end);
 
         return block;
+    }
+
+    public static ByteCodeNode invoke(CompilerContext context, Binding binding)
+    {
+        return new Block(context)
+                .invokeDynamic("call_" + binding.getBindingId(), binding.getType(), binding.getBindingId());
+    }
+
+    public static void setCallSitesField(Class<?> clazz, Map<Long, MethodHandle> callSites)
+    {
+        try {
+            Field field = clazz.getDeclaredField(CALL_SITES_FIELD_NAME);
+            field.setAccessible(true);
+            field.set(null, callSites);
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
     }
 }

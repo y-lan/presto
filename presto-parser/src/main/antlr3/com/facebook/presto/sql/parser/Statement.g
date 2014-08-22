@@ -75,6 +75,7 @@ tokens {
     USE_SCHEMA;
     CREATE_TABLE;
     DROP_TABLE;
+    RENAME_TABLE;
     CREATE_VIEW;
     DROP_VIEW;
     OR_REPLACE;
@@ -166,7 +167,9 @@ statement
     | showFunctionsStmt
     | useCollectionStmt
     | createTableStmt
+    | insertStmt
     | dropTableStmt
+    | alterTableStmt
     | createViewStmt
     | dropViewStmt
     ;
@@ -189,14 +192,14 @@ orderOrLimitQuerySpec
 
 queryExprBody
     : ( queryTerm -> queryTerm )
-      ( UNION setQuant? queryTerm       -> ^(UNION $queryExprBody queryTerm setQuant?)
-      | EXCEPT setQuant? queryTerm      -> ^(EXCEPT $queryExprBody queryTerm setQuant?)
+      ( UNION s=setQuant? queryTerm       -> ^(UNION $queryExprBody queryTerm $s?)
+      | EXCEPT s=setQuant? queryTerm      -> ^(EXCEPT $queryExprBody queryTerm $s?)
       )*
     ;
 
 queryTerm
     : ( queryPrimary -> queryPrimary )
-      ( INTERSECT setQuant? queryPrimary -> ^(INTERSECT $queryTerm queryPrimary setQuant?) )*
+      ( INTERSECT s=setQuant? queryPrimary -> ^(INTERSECT $queryTerm queryPrimary $s?) )*
     ;
 
 queryPrimary
@@ -629,8 +632,16 @@ dropTableStmt
     : DROP TABLE qname -> ^(DROP_TABLE qname)
     ;
 
+insertStmt
+    : INSERT INTO qname query -> ^(INSERT qname query)
+    ;
+
 createTableStmt
     : CREATE TABLE qname s=tableContentsSource -> ^(CREATE_TABLE qname $s)
+    ;
+
+alterTableStmt
+    : ALTER TABLE s=qname RENAME TO t=qname -> ^(RENAME_TABLE $s $t)
     ;
 
 createViewStmt
@@ -818,6 +829,8 @@ CREATE: 'CREATE';
 TABLE: 'TABLE';
 VIEW: 'VIEW';
 REPLACE: 'REPLACE';
+INSERT: 'INSERT';
+INTO: 'INTO';
 CHAR: 'CHAR';
 CHARACTER: 'CHARACTER';
 VARYING: 'VARYING';
@@ -864,6 +877,8 @@ POISSONIZED: 'POISSONIZED';
 TABLESAMPLE: 'TABLESAMPLE';
 RESCALED: 'RESCALED';
 STRATIFY: 'STRATIFY';
+ALTER: 'ALTER';
+RENAME: 'RENAME';
 
 EQ  : '=';
 NEQ : '<>' | '!=';

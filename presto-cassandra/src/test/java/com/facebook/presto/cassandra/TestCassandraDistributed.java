@@ -87,6 +87,13 @@ public class TestCassandraDistributed
     }
 
     @Override
+    public void testRenameTable()
+            throws Exception
+    {
+        // Cassandra does not support renaming tables
+    }
+
+    @Override
     public void testView()
             throws Exception
     {
@@ -98,5 +105,12 @@ public class TestCassandraDistributed
             throws Exception
     {
         // Cassandra connector currently does not support views
+    }
+
+    @Override
+    public void testInsert()
+            throws Exception
+    {
+        // Cassandra connector currently does not support insert
     }
 }

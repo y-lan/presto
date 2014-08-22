@@ -31,15 +31,15 @@ public class TestVariableWidthBlockBuilder
     public void testFixedBlockIsFull()
             throws Exception
     {
-        testIsFull(new VariableWidthBlockBuilder(VARCHAR, new BlockBuilderStatus(VARCHAR_ENTRY_SIZE * EXPECTED_ENTRY_COUNT, 1024)));
-        testIsFull(new VariableWidthBlockBuilder(VARCHAR, new BlockBuilderStatus(1024, VARCHAR_ENTRY_SIZE * EXPECTED_ENTRY_COUNT)));
+        testIsFull(new VariableWidthBlockBuilder(new BlockBuilderStatus(VARCHAR_ENTRY_SIZE * EXPECTED_ENTRY_COUNT, 1024)));
+        testIsFull(new VariableWidthBlockBuilder(new BlockBuilderStatus(1024, VARCHAR_ENTRY_SIZE * EXPECTED_ENTRY_COUNT)));
     }
 
     private void testIsFull(VariableWidthBlockBuilder blockBuilder)
     {
         assertTrue(blockBuilder.isEmpty());
         while (!blockBuilder.isFull()) {
-            blockBuilder.appendSlice(Slices.allocate(VARCHAR_VALUE_SIZE));
+            VARCHAR.writeSlice(blockBuilder, Slices.allocate(VARCHAR_VALUE_SIZE));
         }
         assertEquals(blockBuilder.getPositionCount(), EXPECTED_ENTRY_COUNT);
         assertEquals(blockBuilder.isFull(), true);

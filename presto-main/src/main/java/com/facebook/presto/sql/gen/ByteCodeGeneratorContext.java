@@ -15,32 +15,41 @@ package com.facebook.presto.sql.gen;
 
 import com.facebook.presto.byteCode.ByteCodeNode;
 import com.facebook.presto.byteCode.CompilerContext;
+import com.facebook.presto.metadata.FunctionInfo;
+import com.facebook.presto.metadata.FunctionRegistry;
 import com.facebook.presto.sql.relational.RowExpression;
 
+import java.util.List;
+
+import static com.facebook.presto.sql.gen.ByteCodeUtils.generateInvocation;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class ByteCodeGeneratorContext
 {
-    private final NewByteCodeExpressionVisitor byteCodeGenerator;
+    private final ByteCodeExpressionVisitor byteCodeGenerator;
     private final CompilerContext context;
-    private final BootstrapFunctionBinder bootstrapFunctionBinder;
+    private final CallSiteBinder callSiteBinder;
     private final ByteCodeNode getSessionByteCode;
+    private final FunctionRegistry registry;
 
     public ByteCodeGeneratorContext(
-            NewByteCodeExpressionVisitor byteCodeGenerator,
+            ByteCodeExpressionVisitor byteCodeGenerator,
             CompilerContext context,
-            BootstrapFunctionBinder bootstrapFunctionBinder,
-            ByteCodeNode getSessionByteCode)
+            CallSiteBinder callSiteBinder,
+            ByteCodeNode getSessionByteCode,
+            FunctionRegistry registry)
     {
         checkNotNull(byteCodeGenerator, "byteCodeGenerator is null");
         checkNotNull(context, "context is null");
-        checkNotNull(bootstrapFunctionBinder, "bootstrapFunctionBinder is null");
+        checkNotNull(callSiteBinder, "callSiteBinder is null");
         checkNotNull(getSessionByteCode, "getSessionByteCode is null");
+        checkNotNull(registry, "registry is null");
 
         this.byteCodeGenerator = byteCodeGenerator;
         this.context = context;
-        this.bootstrapFunctionBinder = bootstrapFunctionBinder;
+        this.callSiteBinder = callSiteBinder;
         this.getSessionByteCode = getSessionByteCode;
+        this.registry = registry;
     }
 
     public CompilerContext getContext()
@@ -48,9 +57,9 @@ public class ByteCodeGeneratorContext
         return context;
     }
 
-    public BootstrapFunctionBinder getBootstrapBinder()
+    public CallSiteBinder getCallSiteBinder()
     {
-        return bootstrapFunctionBinder;
+        return callSiteBinder;
     }
 
     public ByteCodeNode generate(RowExpression expression)
@@ -61,5 +70,19 @@ public class ByteCodeGeneratorContext
     public ByteCodeNode generateGetSession()
     {
         return getSessionByteCode;
+    }
+
+    public FunctionRegistry getRegistry()
+    {
+        return registry;
+    }
+
+    /**
+     * Generates a function call with null handling, automatic binding of session parameter, etc.
+     */
+    public ByteCodeNode generateCall(FunctionInfo function, List<ByteCodeNode> arguments)
+    {
+        Binding binding = callSiteBinder.bind(function.getMethodHandle());
+        return generateInvocation(context, function, getSessionByteCode, arguments, binding);
     }
 }

@@ -20,6 +20,7 @@ import com.facebook.presto.sql.tree.CurrentTime;
 import com.facebook.presto.sql.tree.DoubleLiteral;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.GenericLiteral;
+import com.facebook.presto.sql.tree.Intersect;
 import com.facebook.presto.sql.tree.IntervalLiteral;
 import com.facebook.presto.sql.tree.IntervalLiteral.IntervalField;
 import com.facebook.presto.sql.tree.IntervalLiteral.Sign;
@@ -31,12 +32,16 @@ import com.facebook.presto.sql.tree.Query;
 import com.facebook.presto.sql.tree.QuerySpecification;
 import com.facebook.presto.sql.tree.Relation;
 import com.facebook.presto.sql.tree.Row;
+import com.facebook.presto.sql.tree.Select;
+import com.facebook.presto.sql.tree.SelectItem;
+import com.facebook.presto.sql.tree.SingleColumn;
 import com.facebook.presto.sql.tree.SortItem;
 import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.sql.tree.StringLiteral;
 import com.facebook.presto.sql.tree.TableSubquery;
 import com.facebook.presto.sql.tree.TimeLiteral;
 import com.facebook.presto.sql.tree.TimestampLiteral;
+import com.facebook.presto.sql.tree.Union;
 import com.facebook.presto.sql.tree.Values;
 import com.facebook.presto.sql.tree.With;
 import com.google.common.base.Joiner;
@@ -44,9 +49,9 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import org.testng.annotations.Test;
 
-import static com.facebook.presto.sql.SqlFormatter.formatSql;
 import static com.facebook.presto.sql.QueryUtil.selectList;
 import static com.facebook.presto.sql.QueryUtil.table;
+import static com.facebook.presto.sql.SqlFormatter.formatSql;
 import static com.facebook.presto.sql.parser.IdentifierSymbol.AT_SIGN;
 import static com.facebook.presto.sql.parser.IdentifierSymbol.COLON;
 import static java.lang.String.format;
@@ -200,6 +205,49 @@ public class TestSqlParser
                         ImmutableList.<SortItem>of(),
                         Optional.<String>absent(),
                         Optional.<Approximate>absent()));
+    }
+
+    @Test
+    public void testIntersect()
+    {
+        assertStatement("SELECT 123 INTERSECT DISTINCT SELECT 123 INTERSECT ALL SELECT 123",
+                new Query(
+                        Optional.<With>absent(),
+                        new Intersect(ImmutableList.<Relation>of(
+                                new Intersect(ImmutableList.<Relation>of(createSelect123(), createSelect123()), true),
+                                createSelect123()
+                        ), false),
+                        ImmutableList.<SortItem>of(),
+                        Optional.<String>absent(),
+                        Optional.<Approximate>absent()));
+    }
+
+    @Test
+    public void testUnion()
+    {
+        assertStatement("SELECT 123 UNION DISTINCT SELECT 123 UNION ALL SELECT 123",
+                new Query(
+                        Optional.<With>absent(),
+                        new Union(ImmutableList.<Relation>of(
+                                new Union(ImmutableList.<Relation>of(createSelect123(), createSelect123()), true),
+                                createSelect123()
+                        ), false),
+                        ImmutableList.<SortItem>of(),
+                        Optional.<String>absent(),
+                        Optional.<Approximate>absent()));
+    }
+
+    private static QuerySpecification createSelect123()
+    {
+        return new QuerySpecification(
+                new Select(false, ImmutableList.<SelectItem>of(new SingleColumn(new LongLiteral("123")))),
+                null,
+                Optional.<Expression>absent(),
+                ImmutableList.<Expression>of(),
+                Optional.<Expression>absent(),
+                ImmutableList.<SortItem>of(),
+                Optional.<String>absent()
+        );
     }
 
     @Test

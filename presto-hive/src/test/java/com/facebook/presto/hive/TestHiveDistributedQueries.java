@@ -76,6 +76,7 @@ public class TestHiveDistributedQueries
             Map<String, String> hiveProperties = ImmutableMap.<String, String>builder()
                     .put("hive.metastore.uri", "thrift://localhost:8080")
                     .put("hive.allow-drop-table", "true")
+                    .put("hive.allow-rename-table", "true")
                     .build();
             queryRunner.createCatalog("hive", "hive", hiveProperties);
 
@@ -110,5 +111,12 @@ public class TestHiveDistributedQueries
     private static ConnectorSession createSession(String schema)
     {
         return new ConnectorSession("user", "test", "hive", schema, UTC_KEY, ENGLISH, null, null);
+    }
+
+    @Override
+    public void testInsert()
+            throws Exception
+    {
+        // Hive connector currently does not support insert
     }
 }

@@ -35,7 +35,6 @@ import com.facebook.presto.operator.LimitOperator.LimitOperatorFactory;
 import com.facebook.presto.operator.LookupJoinOperators;
 import com.facebook.presto.operator.LookupSourceSupplier;
 import com.facebook.presto.operator.MarkDistinctOperator.MarkDistinctOperatorFactory;
-import com.facebook.presto.operator.MaterializeSampleOperator;
 import com.facebook.presto.operator.OperatorFactory;
 import com.facebook.presto.operator.OrderByOperator.OrderByOperatorFactory;
 import com.facebook.presto.operator.OutputFactory;
@@ -43,6 +42,7 @@ import com.facebook.presto.operator.PageBuilder;
 import com.facebook.presto.operator.ProjectionFunction;
 import com.facebook.presto.operator.ProjectionFunctions;
 import com.facebook.presto.operator.RecordSinkManager;
+import com.facebook.presto.operator.RowNumberLimitOperator;
 import com.facebook.presto.operator.SampleOperator.SampleOperatorFactory;
 import com.facebook.presto.operator.ScanFilterAndProjectOperator.ScanFilterAndProjectOperatorFactory;
 import com.facebook.presto.operator.SetBuilderOperator.SetBuilderOperatorFactory;
@@ -50,9 +50,9 @@ import com.facebook.presto.operator.SetBuilderOperator.SetSupplier;
 import com.facebook.presto.operator.SourceOperatorFactory;
 import com.facebook.presto.operator.TableScanOperator.TableScanOperatorFactory;
 import com.facebook.presto.operator.TopNOperator.TopNOperatorFactory;
+import com.facebook.presto.operator.TopNRowNumberOperator;
 import com.facebook.presto.operator.ValuesOperator.ValuesOperatorFactory;
 import com.facebook.presto.operator.WindowFunctionDefinition;
-import com.facebook.presto.operator.WindowOperator.WindowOperatorFactory;
 import com.facebook.presto.operator.index.FieldSetFilteringRecordSet;
 import com.facebook.presto.operator.index.IndexLookupSourceSupplier;
 import com.facebook.presto.operator.index.IndexSourceOperator;
@@ -76,11 +76,11 @@ import com.facebook.presto.sql.planner.plan.IndexSourceNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
 import com.facebook.presto.sql.planner.plan.LimitNode;
 import com.facebook.presto.sql.planner.plan.MarkDistinctNode;
-import com.facebook.presto.sql.planner.plan.MaterializeSampleNode;
 import com.facebook.presto.sql.planner.plan.OutputNode;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.PlanVisitor;
 import com.facebook.presto.sql.planner.plan.ProjectNode;
+import com.facebook.presto.sql.planner.plan.RowNumberLimitNode;
 import com.facebook.presto.sql.planner.plan.SampleNode;
 import com.facebook.presto.sql.planner.plan.SemiJoinNode;
 import com.facebook.presto.sql.planner.plan.SinkNode;
@@ -89,9 +89,11 @@ import com.facebook.presto.sql.planner.plan.TableCommitNode;
 import com.facebook.presto.sql.planner.plan.TableScanNode;
 import com.facebook.presto.sql.planner.plan.TableWriterNode;
 import com.facebook.presto.sql.planner.plan.TopNNode;
+import com.facebook.presto.sql.planner.plan.TopNRowNumberNode;
 import com.facebook.presto.sql.planner.plan.UnionNode;
 import com.facebook.presto.sql.planner.plan.ValuesNode;
 import com.facebook.presto.sql.planner.plan.WindowNode;
+import com.facebook.presto.sql.relational.SqlToRowExpressionTranslator;
 import com.facebook.presto.sql.tree.BooleanLiteral;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.ExpressionTreeRewriter;
@@ -134,6 +136,7 @@ import static com.facebook.presto.operator.DistinctLimitOperator.DistinctLimitOp
 import static com.facebook.presto.operator.TableCommitOperator.TableCommitOperatorFactory;
 import static com.facebook.presto.operator.TableCommitOperator.TableCommitter;
 import static com.facebook.presto.operator.TableWriterOperator.TableWriterOperatorFactory;
+import static com.facebook.presto.operator.WindowOperator.WindowOperatorFactory;
 import static com.facebook.presto.operator.index.PagesIndexBuilderOperator.PagesIndexBuilderOperatorFactory;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypes;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypesFromInput;
@@ -141,6 +144,9 @@ import static com.facebook.presto.sql.planner.plan.IndexJoinNode.EquiJoinClause.
 import static com.facebook.presto.sql.planner.plan.IndexJoinNode.EquiJoinClause.probeGetter;
 import static com.facebook.presto.sql.planner.plan.JoinNode.EquiJoinClause.leftGetter;
 import static com.facebook.presto.sql.planner.plan.JoinNode.EquiJoinClause.rightGetter;
+import static com.facebook.presto.sql.planner.plan.TableWriterNode.CreateHandle;
+import static com.facebook.presto.sql.planner.plan.TableWriterNode.InsertHandle;
+import static com.facebook.presto.sql.planner.plan.TableWriterNode.WriterTarget;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -365,33 +371,123 @@ public class LocalExecutionPlanner
         }
 
         @Override
-        public PhysicalOperation visitWindow(WindowNode node, LocalExecutionPlanContext context)
+        public PhysicalOperation visitRowNumberLimit(RowNumberLimitNode node, LocalExecutionPlanContext context)
         {
-            PhysicalOperation source = node.getSource().accept(this, context);
+            final PhysicalOperation source = node.getSource().accept(this, context);
 
             List<Symbol> partitionBySymbols = node.getPartitionBy();
-            List<Symbol> orderBySymbols = node.getOrderBy();
-
-            // sort by PARTITION BY, then by ORDER BY
-            ImmutableList.Builder<Integer> partitionChannels = ImmutableList.builder();
-            for (Symbol symbol : partitionBySymbols) {
-                partitionChannels.add(source.getLayout().get(symbol));
-            }
-
-            ImmutableList.Builder<Integer> sortChannels = ImmutableList.builder();
-            ImmutableList.Builder<SortOrder> sortOrder = ImmutableList.builder();
-            for (Symbol symbol : orderBySymbols) {
-                sortChannels.add(source.getLayout().get(symbol));
-                sortOrder.add(node.getOrderings().get(symbol));
-            }
+            List<Integer> partitionChannels = ImmutableList.copyOf(getChannelsForSymbols(partitionBySymbols, source.getLayout()));
+            List<Type> partitionTypes = ImmutableList.copyOf(Iterables.transform(partitionChannels, new Function<Integer, Type>()
+            {
+                public Type apply(Integer input)
+                {
+                    return source.getTypes().get(input);
+                }
+            }));
 
             ImmutableList.Builder<Integer> outputChannels = ImmutableList.builder();
             for (int i = 0; i < source.getTypes().size(); i++) {
                 outputChannels.add(i);
             }
 
-            ImmutableList.Builder<WindowFunctionDefinition> windowFunctions = ImmutableList.builder();
-            List<Symbol> windowFunctionOutputSymbols = new ArrayList<>();
+            // compute the layout of the output from the window operator
+            ImmutableMap.Builder<Symbol, Integer> outputMappings = ImmutableMap.builder();
+            outputMappings.putAll(source.getLayout());
+
+            // row number function goes in the last channel
+            int channel = source.getTypes().size();
+            outputMappings.put(node.getRowNumberSymbol(), channel);
+
+            OperatorFactory operatorFactory = new RowNumberLimitOperator.RowNumberLimitOperatorFactory(
+                    context.getNextOperatorId(),
+                    source.getTypes(),
+                    outputChannels.build(),
+                    partitionChannels,
+                    partitionTypes,
+                    1_000_000,
+                    node.getMaxRowCountPerPartition());
+            return new PhysicalOperation(operatorFactory, outputMappings.build(), source);
+        }
+
+        @Override
+        public PhysicalOperation visitTopNRowNumber(final TopNRowNumberNode node, LocalExecutionPlanContext context)
+        {
+            final PhysicalOperation source = node.getSource().accept(this, context);
+
+            List<Symbol> partitionBySymbols = node.getPartitionBy();
+            List<Integer> partitionChannels = ImmutableList.copyOf(getChannelsForSymbols(partitionBySymbols, source.getLayout()));
+            List<Type> partitionTypes = ImmutableList.copyOf(Iterables.transform(partitionChannels, new Function<Integer, Type>()
+            {
+                public Type apply(Integer input)
+                {
+                    return source.getTypes().get(input);
+                }
+            }));
+
+            List<Symbol> orderBySymbols = node.getOrderBy();
+            List<Integer> sortChannels = ImmutableList.copyOf(getChannelsForSymbols(orderBySymbols, source.getLayout()));
+            List<SortOrder> sortOrder = ImmutableList.copyOf(Iterables.transform(orderBySymbols, new Function<Symbol, SortOrder>()
+            {
+                @Override
+                public SortOrder apply(Symbol input)
+                {
+                    return node.getOrderings().get(input);
+                }
+            }));
+
+            ImmutableList.Builder<Integer> outputChannels = ImmutableList.builder();
+            for (int i = 0; i < source.getTypes().size(); i++) {
+                outputChannels.add(i);
+            }
+
+            // compute the layout of the output from the window operator
+            ImmutableMap.Builder<Symbol, Integer> outputMappings = ImmutableMap.builder();
+            outputMappings.putAll(source.getLayout());
+
+            // row number function goes in the last channel
+            int channel = source.getTypes().size();
+            outputMappings.put(node.getRowNumberSymbol(), channel);
+
+            OperatorFactory operatorFactory = new TopNRowNumberOperator.TopNRowNumberOperatorFactory(
+                    context.getNextOperatorId(),
+                    source.getTypes(),
+                    outputChannels.build(),
+                    partitionChannels,
+                    partitionTypes,
+                    sortChannels,
+                    sortOrder,
+                    node.getMaxRowCountPerPartition(),
+                    1_000_000);
+
+            return new PhysicalOperation(operatorFactory, outputMappings.build(), source);
+        }
+
+        @Override
+        public PhysicalOperation visitWindow(final WindowNode node, LocalExecutionPlanContext context)
+        {
+            final PhysicalOperation source = node.getSource().accept(this, context);
+
+            List<Symbol> partitionBySymbols = node.getPartitionBy();
+            List<Symbol> orderBySymbols = node.getOrderBy();
+            List<Integer> partitionChannels = ImmutableList.copyOf(getChannelsForSymbols(partitionBySymbols, source.getLayout()));
+
+            List<Integer> sortChannels = ImmutableList.copyOf(getChannelsForSymbols(orderBySymbols, source.getLayout()));
+            List<SortOrder> sortOrder = ImmutableList.copyOf(Iterables.transform(orderBySymbols, new Function<Symbol, SortOrder>()
+            {
+                @Override
+                public SortOrder apply(Symbol input)
+                {
+                    return node.getOrderings().get(input);
+                }
+            }));
+
+            ImmutableList.Builder<Integer> outputChannels = ImmutableList.builder();
+            for (int i = 0; i < source.getTypes().size(); i++) {
+                outputChannels.add(i);
+            }
+
+            ImmutableList.Builder<WindowFunctionDefinition> windowFunctionsBuilder = ImmutableList.builder();
+            ImmutableList.Builder<Symbol> windowFunctionOutputSymbolsBuilder = ImmutableList.builder();
             for (Map.Entry<Symbol, FunctionCall> entry : node.getWindowFunctions().entrySet()) {
                 ImmutableList.Builder<Integer> arguments = ImmutableList.builder();
                 for (Expression argument : entry.getValue().getArguments()) {
@@ -400,9 +496,12 @@ public class LocalExecutionPlanner
                 }
                 Symbol symbol = entry.getKey();
                 Signature signature = node.getSignatures().get(symbol);
-                windowFunctions.add(metadata.getExactFunction(signature).bindWindowFunction(arguments.build()));
-                windowFunctionOutputSymbols.add(symbol);
+                windowFunctionsBuilder.add(metadata.getExactFunction(signature).bindWindowFunction(arguments.build()));
+                windowFunctionOutputSymbolsBuilder.add(symbol);
             }
+
+            List<Symbol> windowFunctionOutputSymbols = windowFunctionOutputSymbolsBuilder.build();
+            List<WindowFunctionDefinition> windowFunctions = windowFunctionsBuilder.build();
 
             // compute the layout of the output from the window operator
             ImmutableMap.Builder<Symbol, Integer> outputMappings = ImmutableMap.builder();
@@ -418,14 +517,14 @@ public class LocalExecutionPlanner
             }
 
             OperatorFactory operatorFactory = new WindowOperatorFactory(
-                    context.getNextOperatorId(),
-                    source.getTypes(),
-                    outputChannels.build(),
-                    windowFunctions.build(),
-                    partitionChannels.build(),
-                    sortChannels.build(),
-                    sortOrder.build(),
-                    1_000_000);
+                        context.getNextOperatorId(),
+                        source.getTypes(),
+                        outputChannels.build(),
+                        windowFunctions,
+                        partitionChannels,
+                        sortChannels,
+                        sortOrder,
+                        1_000_000);
 
             return new PhysicalOperation(operatorFactory, outputMappings.build(), source);
         }
@@ -444,15 +543,12 @@ public class LocalExecutionPlanner
                 sortOrders.add(node.getOrderings().get(symbol));
             }
 
-            Optional<Integer> sampleWeightChannel = node.getSampleWeight().transform(source.channelGetter());
-
             OperatorFactory operator = new TopNOperatorFactory(
                     context.getNextOperatorId(),
                     source.getTypes(),
                     (int) node.getCount(),
                     sortChannels,
                     sortOrders,
-                    sampleWeightChannel,
                     node.isPartial());
 
             return new PhysicalOperation(operator, source.getLayout(), source);
@@ -493,9 +589,7 @@ public class LocalExecutionPlanner
         {
             PhysicalOperation source = node.getSource().accept(this, context);
 
-            Optional<Integer> sampleWeightChannel = node.getSampleWeight().transform(source.channelGetter());
-
-            OperatorFactory operatorFactory = new LimitOperatorFactory(context.getNextOperatorId(), source.getTypes(), node.getCount(), sampleWeightChannel);
+            OperatorFactory operatorFactory = new LimitOperatorFactory(context.getNextOperatorId(), source.getTypes(), node.getCount());
             return new PhysicalOperation(operatorFactory, source.getLayout(), source);
         }
 
@@ -534,35 +628,8 @@ public class LocalExecutionPlanner
                     .putAll(source.getLayout())
                     .put(node.getMarkerSymbol(), source.getLayout().size()).build();
 
-            Optional<Integer> sampleWeightChannel = node.getSampleWeightSymbol().transform(source.channelGetter());
-
-            MarkDistinctOperatorFactory operator = new MarkDistinctOperatorFactory(context.getNextOperatorId(), source.getTypes(), channels, sampleWeightChannel);
+            MarkDistinctOperatorFactory operator = new MarkDistinctOperatorFactory(context.getNextOperatorId(), source.getTypes(), channels);
             return new PhysicalOperation(operator, outputMappings, source);
-        }
-
-        @Override
-        public PhysicalOperation visitMaterializeSample(MaterializeSampleNode node, LocalExecutionPlanContext context)
-        {
-            PhysicalOperation source = node.getSource().accept(this, context);
-
-            int sampleWeightChannel = Iterables.getOnlyElement(getChannelsForSymbols(ImmutableList.of(node.getSampleWeightSymbol()), source.getLayout()));
-
-            ImmutableMap.Builder<Symbol, Integer> outputMappings = ImmutableMap.builder();
-            for (Map.Entry<Symbol, Integer> entry : source.getLayout().entrySet()) {
-                int value = entry.getValue();
-                if (value == sampleWeightChannel) {
-                    continue;
-                }
-                // Because we've removed the sample weight channel, all channels after it have been renumbered
-                outputMappings.put(entry.getKey(), value > sampleWeightChannel ? value - 1 : value);
-            }
-
-            List<Type> types = new ArrayList<>();
-            types.addAll(source.getTypes());
-            types.remove(sampleWeightChannel);
-
-            MaterializeSampleOperator.MaterializeSampleOperatorFactory operator = new MaterializeSampleOperator.MaterializeSampleOperatorFactory(context.getNextOperatorId(), types, sampleWeightChannel);
-            return new PhysicalOperation(operator, outputMappings.build(), source);
         }
 
         @Override
@@ -695,20 +762,16 @@ public class LocalExecutionPlanner
                             sourceNode.getId(),
                             dataStreamProvider,
                             columns,
-                            rewrittenFilter,
-                            rewrittenProjections,
-                            expressionTypes,
-                            session.getTimeZoneKey());
+                            SqlToRowExpressionTranslator.translate(rewrittenFilter, expressionTypes, metadata, session, true),
+                            SqlToRowExpressionTranslator.translate(rewrittenProjections, expressionTypes, metadata, session, true));
 
                     return new PhysicalOperation(operatorFactory, outputMappings);
                 }
                 else {
                     OperatorFactory operatorFactory = compiler.compileFilterAndProjectOperator(
                             context.getNextOperatorId(),
-                            rewrittenFilter,
-                            rewrittenProjections,
-                            expressionTypes,
-                            session.getTimeZoneKey());
+                            SqlToRowExpressionTranslator.translate(rewrittenFilter, expressionTypes, metadata, session, true),
+                            SqlToRowExpressionTranslator.translate(rewrittenProjections, expressionTypes, metadata, session, true));
                     return new PhysicalOperation(operatorFactory, outputMappings, source);
                 }
             }
@@ -825,11 +888,11 @@ public class LocalExecutionPlanner
                 for (int i = 0; i < row.size(); i++) {
                     // evaluate the literal value
                     Object result = ExpressionInterpreter.expressionInterpreter(row.get(i), metadata, context.getSession(), expressionTypes).evaluate(0);
-                    BlockUtils.appendObject(pageBuilder.getBlockBuilder(i), result);
+                    BlockUtils.appendObject(outputTypes.get(i), pageBuilder.getBlockBuilder(i), result);
                 }
             }
 
-            OperatorFactory operatorFactory = new ValuesOperatorFactory(context.getNextOperatorId(), ImmutableList.of(pageBuilder.build()));
+            OperatorFactory operatorFactory = new ValuesOperatorFactory(context.getNextOperatorId(), outputTypes, ImmutableList.of(pageBuilder.build()));
             return new PhysicalOperation(operatorFactory, outputMappings);
         }
 
@@ -1139,7 +1202,7 @@ public class LocalExecutionPlanner
             Optional<Integer> sampleWeightChannel = node.getSampleWeightSymbol().transform(exchange.channelGetter());
 
             // create the table writer
-            RecordSink recordSink = recordSinkManager.getRecordSink(node.getTarget());
+            RecordSink recordSink = getRecordSink(node);
 
             List<Type> types = IterableTransformer.on(node.getColumns())
                     .transform(Functions.forMap(context.getTypes()))
@@ -1196,7 +1259,7 @@ public class LocalExecutionPlanner
         {
             PhysicalOperation source = node.getSource().accept(this, context);
 
-            OperatorFactory operatorFactory = new TableCommitOperatorFactory(context.getNextOperatorId(), createTableCommitter(node, metadata));
+            OperatorFactory operatorFactory = new TableCommitOperatorFactory(context.getNextOperatorId(), createTableCommitter(node));
             Map<Symbol, Integer> layout = ImmutableMap.of(node.getOutputSymbols().get(0), 0);
 
             return new PhysicalOperation(operatorFactory, layout, source);
@@ -1353,14 +1416,35 @@ public class LocalExecutionPlanner
         }
     }
 
-    private static TableCommitter createTableCommitter(final TableCommitNode node, final Metadata metadata)
+    private RecordSink getRecordSink(TableWriterNode node)
     {
+        WriterTarget target = node.getTarget();
+        if (target instanceof CreateHandle) {
+            return recordSinkManager.getRecordSink(((CreateHandle) target).getHandle());
+        }
+        if (target instanceof InsertHandle) {
+            return recordSinkManager.getRecordSink(((InsertHandle) target).getHandle());
+        }
+        throw new AssertionError("Unhandled target type: " + target.getClass().getName());
+    }
+
+    private TableCommitter createTableCommitter(TableCommitNode node)
+    {
+        final WriterTarget target = node.getTarget();
         return new TableCommitter()
         {
             @Override
             public void commitTable(Collection<String> fragments)
             {
-                metadata.commitCreateTable(node.getTarget(), fragments);
+                if (target instanceof CreateHandle) {
+                    metadata.commitCreateTable(((CreateHandle) target).getHandle(), fragments);
+                }
+                else if (target instanceof InsertHandle) {
+                    metadata.commitInsert(((InsertHandle) target).getHandle(), fragments);
+                }
+                else {
+                    throw new AssertionError("Unhandled target type: " + target.getClass().getName());
+                }
             }
         };
     }

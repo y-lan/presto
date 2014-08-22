@@ -18,12 +18,14 @@ import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.tree.ArithmeticExpression;
 import com.facebook.presto.sql.tree.ComparisonExpression;
 import com.facebook.presto.sql.tree.LogicalBinaryExpression;
+import com.google.common.collect.ImmutableList;
 
 import java.util.List;
 
 import static com.facebook.presto.metadata.Signature.internalFunction;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.type.LikePatternType.LIKE_PATTERN;
 
 public final class Signatures
 {
@@ -43,7 +45,7 @@ public final class Signatures
     // **************** sql operators ****************
     public static Signature notSignature()
     {
-        return internalFunction("NOT", BOOLEAN, BOOLEAN);
+        return new Signature("not", BOOLEAN, ImmutableList.of(BOOLEAN));
     }
 
     public static Signature betweenSignature(Type valueType, Type minType, Type maxType)
@@ -53,12 +55,12 @@ public final class Signatures
 
     public static Signature likeSignature()
     {
-        return internalFunction("LIKE", BOOLEAN, VARCHAR, VARCHAR);
+        return internalFunction("LIKE", BOOLEAN, VARCHAR, LIKE_PATTERN);
     }
 
-    public static Signature likeWithEscapeSignature()
+    public static Signature likePatternSignature()
     {
-        return internalFunction("LIKE", BOOLEAN, VARCHAR, VARCHAR, VARCHAR);
+        return internalFunction("LIKE_PATTERN", LIKE_PATTERN, VARCHAR, VARCHAR);
     }
 
     public static Signature castSignature(Type returnType, Type valueType)

@@ -13,68 +13,87 @@
  */
 package com.facebook.presto.spi.block;
 
-import com.facebook.presto.spi.ConnectorSession;
-import com.facebook.presto.spi.type.Type;
 import io.airlift.slice.Slice;
 
 public interface Block
 {
     /**
-     * Appends the value at the specified position to the block builder.
+     * Gets the length of the value at the {@code position}.
      */
-    void appendTo(int position, BlockBuilder blockBuilder);
+    int getLength(int position);
 
     /**
-     * Compares the value at the specified position to the value at the other position
-     * in the other block.
+     * Gets a byte at {@code offset} in the value at {@code position}.
      */
-    int compareTo(SortOrder sortOrder, int position, Block otherBlock, int otherPosition);
+    byte getByte(int position, int offset);
 
     /**
-     * Compares the value at the specified position to the value at the other offset
-     * in the other slice.
+     * Gets a little endian short at {@code offset} in the value at {@code position}.
      */
-    int compareTo(int position, Slice otherSlice, int otherOffset, int otherLength);
+    short getShort(int position, int offset);
 
     /**
-     * Is the value at the specified position equal to the value at the other position
-     * in the other block?
+     * Gets a little endian int at {@code offset} in the value at {@code position}.
      */
-    boolean equalTo(int position, Block otherBlock, int otherPosition);
+    int getInt(int position, int offset);
 
     /**
-     * Is the value at the specified position equal to the value at the other offset
-     * in the other slice?
+     * Gets a little endian long at {@code offset} in the value at {@code position}.
      */
-    boolean equalTo(int position, Slice otherSlice, int otherOffset, int otherLength);
+    long getLong(int position, int offset);
 
     /**
-     * Gets the value at the specified position as a boolean.
-     *
-     * @throws IllegalArgumentException if this position is not valid
+     * Gets a little endian float at {@code offset} in the value at {@code position}.
      */
-    boolean getBoolean(int position);
+    float getFloat(int position, int offset);
 
     /**
-     * Gets the value at the specified position as a double.
-     *
-     * @throws IllegalArgumentException if this position is not valid
+     * Gets a little endian double at {@code offset} in the value at {@code position}.
      */
-    double getDouble(int position);
+    double getDouble(int position, int offset);
 
     /**
-     * Gets the value at the specified position as a long.
-     *
-     * @throws IllegalArgumentException if this position is not valid
+     * Gets a slice at {@code offset} in the value at {@code position}.
      */
-    long getLong(int position);
+    Slice getSlice(int position, int offset, int length);
 
     /**
-     * Gets the value at the specified position as an Object.
-     *
-     * @throws IllegalArgumentException if this position is not valid
+     * Is the byte sequences at {@code offset} in the value at {@code position} equal
+     * to the byte sequence at {@code otherOffset} in {@code otherSlice}.
      */
-    Object getObjectValue(ConnectorSession session, int position);
+    boolean bytesEqual(int position, int offset, Slice otherSlice, int otherOffset, int length);
+
+    /**
+     * Compares the byte sequences at {@code offset} in the value at {@code position}
+     * to the byte sequence at {@code otherOffset} in {@code otherSlice}.
+     */
+    int bytesCompare(int position, int offset, int length, Slice otherSlice, int otherOffset, int otherLength);
+
+    /**
+     * Appends the byte sequences at {@code offset} in the value at {@code position}
+     * to {@code blockBuilder}.
+     */
+    void writeBytesTo(int position, int offset, int length, BlockBuilder blockBuilder);
+
+    /**
+     * Is the byte sequences at {@code offset} in the value at {@code position} equal
+     * to the byte sequence at {@code otherOffset} in the value at {@code otherPosition}
+     * in {@code otherBlock}.
+     */
+    boolean equals(int position, int offset, Block otherBlock, int otherPosition, int otherOffset, int length);
+
+    /**
+     * Calculates the hash code the byte sequences at {@code offset} in the
+     * value at {@code position}.
+     */
+    int hash(int position, int offset, int length);
+
+    /**
+     * Compares the byte sequences at {@code offset} in the value at {@code position}
+     * to the byte sequence at {@code otherOffset} in the value at {@code otherPosition}
+     * in {@code otherBlock}.
+     */
+    int compareTo(int leftPosition, int leftOffset, int leftLength, Block rightBlock, int rightPosition, int rightOffset, int rightLength);
 
     /**
      * Gets the value at the specified position as a single element block.
@@ -82,18 +101,6 @@ public interface Block
      * @throws IllegalArgumentException if this position is not valid
      */
     Block getSingleValueBlock(int position);
-
-    /**
-     * Gets the value at the specified position as a Slice.
-     *
-     * @throws IllegalArgumentException if this position is not valid
-     */
-    Slice getSlice(int position);
-
-    /**
-     * Gets the type of this block.
-     */
-    Type getType();
 
     /**
      * Returns the number of positions in this block.
@@ -116,11 +123,6 @@ public interface Block
      * within this block.
      */
     Block getRegion(int positionOffset, int length);
-
-    /**
-     * Calculates the hash code of the value at the specified position.
-     */
-    int hash(int position);
 
     /**
      * Is the specified position null?

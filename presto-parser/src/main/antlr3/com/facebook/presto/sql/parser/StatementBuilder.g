@@ -67,8 +67,10 @@ statement returns [Statement value]
     | useCollection             { $value = $useCollection.value; }
     | createTable               { $value = $createTable.value; }
     | dropTable                 { $value = $dropTable.value; }
+    | renameTable               { $value = $renameTable.value; }
     | createView                { $value = $createView.value; }
     | dropView                  { $value = $dropView.value; }
+    | insert                    { $value = $insert.value; }
     ;
 
 query returns [Query value]
@@ -558,6 +560,10 @@ dropTable returns [Statement value]
     : ^(DROP_TABLE qname) { $value = new DropTable($qname.value); }
     ;
 
+renameTable returns [Statement value]
+    : ^(RENAME_TABLE s=qname t=qname) { $value = new RenameTable($s.value, $t.value); }
+    ;
+
 createView returns [Statement value]
     : ^(CREATE_VIEW qname query orReplace) { $value = new CreateView($qname.value, $query.value, $orReplace.value); }
     ;
@@ -569,4 +575,8 @@ dropView returns [Statement value]
 orReplace returns [boolean value]
     : OR_REPLACE { $value = true; }
     |            { $value = false; }
+	;
+
+insert returns [Statement value]
+    : ^(INSERT qname query) { $value = new Insert($qname.value, $query.value); }
     ;

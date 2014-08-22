@@ -20,10 +20,15 @@ import com.facebook.presto.byteCode.CompilerContext;
 import com.facebook.presto.byteCode.DumpByteCodeVisitor;
 import com.facebook.presto.byteCode.DynamicClassLoader;
 import com.facebook.presto.byteCode.FieldDefinition;
-import com.facebook.presto.byteCode.LocalVariableDefinition;
 import com.facebook.presto.byteCode.SmartClassWriter;
+import com.facebook.presto.byteCode.Variable;
 import com.facebook.presto.operator.aggregation.GroupedAccumulator;
 import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.spi.type.BooleanType;
+import com.facebook.presto.spi.type.DoubleType;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.util.array.BooleanBigArray;
 import com.facebook.presto.util.array.ByteBigArray;
 import com.facebook.presto.util.array.DoubleBigArray;
@@ -37,6 +42,7 @@ import io.airlift.slice.SizeOf;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import org.objectweb.asm.ClassWriter;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
@@ -53,6 +59,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static com.facebook.presto.byteCode.Access.FINAL;
 import static com.facebook.presto.byteCode.Access.PRIVATE;
 import static com.facebook.presto.byteCode.Access.PUBLIC;
+import static com.facebook.presto.byteCode.Access.STATIC;
 import static com.facebook.presto.byteCode.Access.a;
 import static com.facebook.presto.byteCode.NamedParameterDefinition.arg;
 import static com.facebook.presto.byteCode.ParameterizedType.type;
@@ -67,11 +74,6 @@ public class StateCompiler
     private static final boolean DUMP_BYTE_CODE_TREE = false;
 
     private static final AtomicLong CLASS_ID = new AtomicLong();
-
-    private DynamicClassLoader createClassLoader()
-    {
-        return new DynamicClassLoader(getClass().getClassLoader());
-    }
 
     private static Map<String, Class<?>> defineClasses(List<ClassDefinition> classDefinitions, DynamicClassLoader classLoader)
     {
@@ -124,6 +126,11 @@ public class StateCompiler
 
     public <T> AccumulatorStateSerializer<T> generateStateSerializer(Class<T> clazz)
     {
+        return generateStateSerializer(clazz, new DynamicClassLoader(clazz.getClassLoader()));
+    }
+
+    public <T> AccumulatorStateSerializer<T> generateStateSerializer(Class<T> clazz, DynamicClassLoader classLoader)
+    {
         AccumulatorStateMetadata metadata = getMetadataAnnotation(clazz);
         if (metadata != null && metadata.stateSerializerClass() != void.class) {
             try {
@@ -133,8 +140,6 @@ public class StateCompiler
                 throw Throwables.propagate(e);
             }
         }
-
-        DynamicClassLoader classLoader = createClassLoader();
 
         ClassDefinition definition = new ClassDefinition(new CompilerContext(null),
                 a(PUBLIC, FINAL),
@@ -146,6 +151,7 @@ public class StateCompiler
         definition.declareDefaultConstructor(a(PUBLIC));
 
         List<StateField> fields = enumerateFields(clazz);
+        generateGetSerializedType(definition, fields);
         generateSerialize(definition, clazz, fields);
         generateDeserialize(definition, clazz, fields);
 
@@ -156,6 +162,42 @@ public class StateCompiler
         catch (InstantiationException | IllegalAccessException e) {
             throw Throwables.propagate(e);
         }
+    }
+
+    private static void generateGetSerializedType(ClassDefinition definition, List<StateField> fields)
+    {
+        CompilerContext compilerContext = new CompilerContext(null);
+        Block body = definition.declareMethod(compilerContext, a(PUBLIC), "getSerializedType", type(Type.class)).getBody();
+
+        Class<?> type;
+        if (fields.size() > 1) {
+            type = VarcharType.class;
+        }
+        else {
+            Class<?> stackType = fields.get(0).getType();
+            if (stackType == long.class) {
+                type = BigintType.class;
+            }
+            else if (stackType == double.class) {
+                type = DoubleType.class;
+            }
+            else if (stackType == boolean.class) {
+                type = BooleanType.class;
+            }
+            else if (stackType == byte.class) {
+                type = BigintType.class;
+            }
+            else if (stackType == Slice.class) {
+                type = VarcharType.class;
+            }
+            else {
+                throw new IllegalArgumentException("Unsupported type: " + stackType);
+            }
+        }
+
+        body.comment("return %s.getInstance()", type.getSimpleName())
+                .invokeStatic(type, "getInstance", type)
+                .retObject();
     }
 
     private static <T> AccumulatorStateMetadata getMetadataAnnotation(Class<T> clazz)
@@ -184,11 +226,15 @@ public class StateCompiler
             generatePrimitiveDeserializer(deserializerBody, getSetter(clazz, fields.get(0)));
         }
         else {
-            LocalVariableDefinition slice = compilerContext.declareVariable(Slice.class, "slice");
-            deserializerBody.comment("Slice slice = block.getSlice(index);")
+            Variable slice = compilerContext.declareVariable(Slice.class, "slice");
+            deserializerBody.comment("Slice slice = block.getSlice(index, 0, block.getLength(index));")
                     .getVariable("block")
                     .getVariable("index")
-                    .invokeInterface(com.facebook.presto.spi.block.Block.class, "getSlice", Slice.class, int.class)
+                    .push(0)
+                    .getVariable("block")
+                    .getVariable("index")
+                    .invokeInterface(com.facebook.presto.spi.block.Block.class, "getLength", int.class, int.class)
+                    .invokeInterface(com.facebook.presto.spi.block.Block.class, "getSlice", Slice.class, int.class, int.class, int.class)
                     .putVariable(slice);
 
             for (StateField field : fields) {
@@ -207,7 +253,7 @@ public class StateCompiler
             generatePrimitiveSerializer(serializerBody, getGetter(clazz, fields.get(0)));
         }
         else {
-            LocalVariableDefinition slice = compilerContext.declareVariable(Slice.class, "slice");
+            Variable slice = compilerContext.declareVariable(Slice.class, "slice");
             int size = serializedSizeOf(clazz);
             serializerBody.comment("Slice slice = Slices.allocate(%d);", size)
                     .push(size)
@@ -220,12 +266,16 @@ public class StateCompiler
             serializerBody.comment("out.appendSlice(slice);")
                     .getVariable("out")
                     .getVariable(slice)
-                    .invokeInterface(BlockBuilder.class, "appendSlice", BlockBuilder.class, Slice.class);
+                    .push(0)
+                    .push(size)
+                    .invokeInterface(BlockBuilder.class, "writeBytes", BlockBuilder.class, Slice.class, int.class, int.class)
+                    .invokeInterface(BlockBuilder.class, "closeEntry", BlockBuilder.class)
+                    .pop();
         }
         serializerBody.ret();
     }
 
-    private static void generateSerializeFieldToSlice(Block body, LocalVariableDefinition slice, Method getter, int offset)
+    private static void generateSerializeFieldToSlice(Block body, Variable slice, Method getter, int offset)
     {
         Method sliceSetterMethod = StateCompilerUtils.getSliceSetter(getter.getReturnType());
         body.comment("slice.%s(offset, state.%s())", sliceSetterMethod.getName(), getter.getName())
@@ -306,7 +356,7 @@ public class StateCompiler
                 .invokeInterface(setter);
     }
 
-    private static void generateDeserializeFromSlice(Block body, LocalVariableDefinition slice, Method setter, int offset)
+    private static void generateDeserializeFromSlice(Block body, Variable slice, Method setter, int offset)
     {
         Method sliceGetterMethod = StateCompilerUtils.getSliceGetter(setter.getParameterTypes()[0]);
         body.comment("state.%s(slice.%s(%d))", setter.getName(), sliceGetterMethod.getName(), offset)
@@ -319,6 +369,11 @@ public class StateCompiler
 
     public <T> AccumulatorStateFactory<T> generateStateFactory(Class<T> clazz)
     {
+        return generateStateFactory(clazz, new DynamicClassLoader(clazz.getClassLoader()));
+    }
+
+    public <T> AccumulatorStateFactory<T> generateStateFactory(Class<T> clazz, DynamicClassLoader classLoader)
+    {
         AccumulatorStateMetadata metadata = getMetadataAnnotation(clazz);
         if (metadata != null && metadata.stateFactoryClass() != void.class) {
             try {
@@ -329,7 +384,6 @@ public class StateCompiler
             }
         }
 
-        DynamicClassLoader classLoader = createClassLoader();
         Class<? extends T> singleStateClass = generateSingleStateClass(clazz, classLoader);
         Class<? extends T> groupedStateClass = generateGroupedStateClass(clazz, classLoader);
 
@@ -358,6 +412,17 @@ public class StateCompiler
                 .invokeConstructor(groupedStateClass)
                 .retObject();
 
+        // Generate getters for state class
+        definition.declareMethod(new CompilerContext(null), a(PUBLIC), "getSingleStateClass", type(Class.class, singleStateClass))
+                .getBody()
+                .push(singleStateClass)
+                .retObject();
+
+        definition.declareMethod(new CompilerContext(null), a(PUBLIC), "getGroupedStateClass", type(Class.class, groupedStateClass))
+                .getBody()
+                .push(groupedStateClass)
+                .retObject();
+
         Class<? extends AccumulatorStateFactory> factoryClass = defineClass(definition, AccumulatorStateFactory.class, classLoader);
         try {
             return (AccumulatorStateFactory<T>) factoryClass.newInstance();
@@ -372,14 +437,31 @@ public class StateCompiler
         ClassDefinition definition = new ClassDefinition(new CompilerContext(null),
                 a(PUBLIC, FINAL),
                 typeFromPathName("Single" + clazz.getSimpleName() + "_" + CLASS_ID.incrementAndGet()),
-                type(AbstractAccumulatorState.class),
+                type(Object.class),
                 type(clazz));
+
+        // Store class size in static field
+        FieldDefinition classSize = definition.declareField(a(PRIVATE, STATIC, FINAL), "CLASS_SIZE", long.class);
+        definition.getClassInitializer()
+                .getBody()
+                .comment("CLASS_SIZE = ClassLayout.parseClass(%s.class).instanceSize()", definition.getName())
+                .push(definition.getType())
+                .invokeStatic(ClassLayout.class, "parseClass", ClassLayout.class, Class.class)
+                .invokeVirtual(ClassLayout.class, "instanceSize", int.class)
+                .intToLong()
+                .putStaticField(classSize);
+
+        // Add getter for class size
+        definition.declareMethod(new CompilerContext(null), a(PUBLIC), "getEstimatedSize", type(long.class))
+                .getBody()
+                .getStaticField(classSize)
+                .retLong();
 
         // Generate constructor
         Block constructor = definition.declareConstructor(new CompilerContext(null), a(PUBLIC))
                 .getBody()
                 .pushThis()
-                .invokeConstructor(AbstractAccumulatorState.class);
+                .invokeConstructor(Object.class);
 
         // Generate fields
         List<StateField> fields = enumerateFields(clazz);

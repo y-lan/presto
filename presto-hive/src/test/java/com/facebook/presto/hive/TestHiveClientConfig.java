@@ -44,6 +44,7 @@ public class TestHiveClientConfig
                 .setMaxGlobalSplitIteratorThreads(1_000)
                 .setMaxSplitIteratorThreads(50)
                 .setAllowDropTable(false)
+                .setAllowRenameTable(false)
                 .setMetastoreCacheTtl(new Duration(1, TimeUnit.HOURS))
                 .setMetastoreRefreshInterval(new Duration(2, TimeUnit.MINUTES))
                 .setMaxMetastoreRefreshThreads(100)
@@ -56,6 +57,7 @@ public class TestHiveClientConfig
                 .setDfsTimeout(new Duration(10, TimeUnit.SECONDS))
                 .setDfsConnectTimeout(new Duration(500, TimeUnit.MILLISECONDS))
                 .setDfsConnectMaxRetries(5)
+                .setVerifyChecksum(true)
                 .setResourceConfigFiles((String) null)
                 .setHiveStorageFormat(HiveStorageFormat.RCBINARY)
                 .setDomainSocketPath(null)
@@ -66,6 +68,7 @@ public class TestHiveClientConfig
                 .setS3MaxErrorRetries(10)
                 .setS3MaxBackoffTime(new Duration(10, TimeUnit.MINUTES))
                 .setS3ConnectTimeout(new Duration(5, TimeUnit.SECONDS))
+                .setS3MaxConnections(500)
                 .setS3StagingDirectory(new File(StandardSystemProperty.JAVA_IO_TMPDIR.value())));
     }
 
@@ -79,6 +82,7 @@ public class TestHiveClientConfig
                 .put("hive.max-global-split-iterator-threads", "10")
                 .put("hive.max-split-iterator-threads", "2")
                 .put("hive.allow-drop-table", "true")
+                .put("hive.allow-rename-table", "true")
                 .put("hive.metastore-cache-ttl", "2h")
                 .put("hive.metastore-refresh-interval", "30m")
                 .put("hive.metastore-refresh-max-threads", "2500")
@@ -89,6 +93,7 @@ public class TestHiveClientConfig
                 .put("hive.dfs-timeout", "33s")
                 .put("hive.dfs.connect.timeout", "20s")
                 .put("hive.dfs.connect.max-retries", "10")
+                .put("hive.dfs.verify-checksum", "false")
                 .put("hive.config.resources", "/foo.xml,/bar.xml")
                 .put("hive.max-initial-splits", "10")
                 .put("hive.max-initial-split-size", "16MB")
@@ -101,6 +106,7 @@ public class TestHiveClientConfig
                 .put("hive.s3.max-error-retries", "8")
                 .put("hive.s3.max-backoff-time", "4m")
                 .put("hive.s3.connect-timeout", "8s")
+                .put("hive.s3.max-connections", "77")
                 .put("hive.s3.staging-directory", "/s3-staging")
                 .build();
 
@@ -111,6 +117,7 @@ public class TestHiveClientConfig
                 .setMaxGlobalSplitIteratorThreads(10)
                 .setMaxSplitIteratorThreads(2)
                 .setAllowDropTable(true)
+                .setAllowRenameTable(true)
                 .setMetastoreCacheTtl(new Duration(2, TimeUnit.HOURS))
                 .setMetastoreRefreshInterval(new Duration(30, TimeUnit.MINUTES))
                 .setMaxMetastoreRefreshThreads(2500)
@@ -123,6 +130,7 @@ public class TestHiveClientConfig
                 .setDfsTimeout(new Duration(33, TimeUnit.SECONDS))
                 .setDfsConnectTimeout(new Duration(20, TimeUnit.SECONDS))
                 .setDfsConnectMaxRetries(10)
+                .setVerifyChecksum(false)
                 .setResourceConfigFiles(ImmutableList.of("/foo.xml", "/bar.xml"))
                 .setHiveStorageFormat(HiveStorageFormat.SEQUENCEFILE)
                 .setDomainSocketPath("/foo")
@@ -133,6 +141,7 @@ public class TestHiveClientConfig
                 .setS3MaxErrorRetries(8)
                 .setS3MaxBackoffTime(new Duration(4, TimeUnit.MINUTES))
                 .setS3ConnectTimeout(new Duration(8, TimeUnit.SECONDS))
+                .setS3MaxConnections(77)
                 .setS3StagingDirectory(new File("/s3-staging"));
 
         ConfigAssertions.assertFullMapping(properties, expected);

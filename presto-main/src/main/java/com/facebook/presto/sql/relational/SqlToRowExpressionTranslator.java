@@ -15,8 +15,10 @@ package com.facebook.presto.sql.relational;
 
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.Signature;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.TimeZoneKey;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.sql.relational.optimizer.ExpressionOptimizer;
 import com.facebook.presto.sql.tree.ArithmeticExpression;
 import com.facebook.presto.sql.tree.AstVisitor;
 import com.facebook.presto.sql.tree.BetweenPredicate;
@@ -75,13 +77,14 @@ import static com.facebook.presto.sql.relational.Signatures.betweenSignature;
 import static com.facebook.presto.sql.relational.Signatures.castSignature;
 import static com.facebook.presto.sql.relational.Signatures.coalesceSignature;
 import static com.facebook.presto.sql.relational.Signatures.comparisonExpressionSignature;
+import static com.facebook.presto.sql.relational.Signatures.likePatternSignature;
 import static com.facebook.presto.sql.relational.Signatures.likeSignature;
-import static com.facebook.presto.sql.relational.Signatures.likeWithEscapeSignature;
 import static com.facebook.presto.sql.relational.Signatures.logicalExpressionSignature;
 import static com.facebook.presto.sql.relational.Signatures.nullIfSignature;
 import static com.facebook.presto.sql.relational.Signatures.switchSignature;
 import static com.facebook.presto.sql.relational.Signatures.tryCastSignature;
 import static com.facebook.presto.sql.relational.Signatures.whenSignature;
+import static com.facebook.presto.type.LikePatternType.LIKE_PATTERN;
 import static com.facebook.presto.util.DateTimeUtils.parseDayTimeInterval;
 import static com.facebook.presto.util.DateTimeUtils.parseTimeWithTimeZone;
 import static com.facebook.presto.util.DateTimeUtils.parseTimeWithoutTimeZone;
@@ -95,12 +98,27 @@ public final class SqlToRowExpressionTranslator
     {
     }
 
-    public static RowExpression translate(Expression expression, IdentityHashMap<Expression, Type> types, Metadata metadata, TimeZoneKey timeZoneKey)
+    public static RowExpression translate(Expression expression, IdentityHashMap<Expression, Type> types, Metadata metadata, ConnectorSession session, boolean optimize)
     {
-        RowExpression result = new Visitor(types, metadata, timeZoneKey).process(expression, null);
+        RowExpression result = new Visitor(types, metadata, session.getTimeZoneKey()).process(expression, null);
 
         Preconditions.checkNotNull(result, "translated expression is null");
+
+        if (optimize) {
+            ExpressionOptimizer optimizer = new ExpressionOptimizer(metadata.getFunctionRegistry(), session);
+            return optimizer.optimize(result);
+        }
+
         return result;
+    }
+
+    public static List<RowExpression> translate(List<Expression> expressions, IdentityHashMap<Expression, Type> types, Metadata metadata, ConnectorSession session, boolean optimize)
+    {
+        ImmutableList.Builder<RowExpression> builder = ImmutableList.builder();
+        for (Expression expression : expressions) {
+            builder.add(translate(expression, types, metadata, session, optimize));
+        }
+        return builder.build();
     }
 
     private static class Visitor
@@ -231,7 +249,7 @@ public final class SqlToRowExpressionTranslator
             List<RowExpression> arguments = Lists.transform(node.getArguments(), processFunction(context));
 
             List<Type> argumentTypes = Lists.transform(arguments, typeGetter());
-            Signature signature = new Signature(node.getName().getSuffix(), types.get(node), argumentTypes, false, false);
+            Signature signature = new Signature(node.getName().getSuffix(), types.get(node), argumentTypes);
 
             return call(signature, arguments);
         }
@@ -441,10 +459,10 @@ public final class SqlToRowExpressionTranslator
 
             if (node.getEscape() != null) {
                 RowExpression escape = process(node.getEscape(), context);
-                return call(likeWithEscapeSignature(), value, pattern, escape);
+                return call(likeSignature(), value, call(likePatternSignature(), pattern, escape));
             }
 
-            return call(likeSignature(), value, pattern);
+            return call(likeSignature(), value, call(castSignature(LIKE_PATTERN, VARCHAR), pattern));
         }
     }
 }

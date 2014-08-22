@@ -13,9 +13,17 @@
  */
 package com.facebook.presto.operator.aggregation;
 
+import com.facebook.presto.operator.aggregation.state.AccumulatorStateSerializer;
 import com.facebook.presto.operator.aggregation.state.VarianceState;
 import com.facebook.presto.spi.type.Type;
+import com.google.common.base.CaseFormat;
 import com.google.common.base.Throwables;
+
+import javax.annotation.Nullable;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.List;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -23,53 +31,6 @@ public final class AggregationUtils
 {
     private AggregationUtils()
     {
-    }
-
-    public static AggregationFunction createIsolatedApproximateAggregation(Class<? extends AbstractAggregationFunction> aggregationClass, Type parameterType)
-    {
-        Class<? extends AggregationFunction> functionClass = IsolatedClass.isolateClass(
-                AggregationFunction.class,
-
-                aggregationClass,
-
-                AbstractAggregationFunction.class,
-
-                AbstractAggregationFunction.GenericGroupedAccumulator.class,
-
-                AbstractAggregationFunction.GenericAccumulator.class);
-
-        try {
-            return functionClass
-                    .getConstructor(Type.class)
-                    .newInstance(parameterType);
-        }
-        catch (Exception e) {
-            throw Throwables.propagate(e);
-        }
-    }
-
-    public static AggregationFunction createIsolatedAggregation(Class<? extends AggregationFunction> aggregationClass, Type parameterType)
-    {
-        Class<? extends AggregationFunction> functionClass = IsolatedClass.isolateClass(
-                AggregationFunction.class,
-
-                aggregationClass,
-
-                AbstractAggregationFunction.class,
-                AbstractExactAggregationFunction.class,
-
-                AbstractExactAggregationFunction.GenericGroupedAccumulator.class,
-
-                AbstractExactAggregationFunction.GenericAccumulator.class);
-
-        try {
-            return functionClass
-                    .getConstructor(Type.class)
-                    .newInstance(parameterType);
-        }
-        catch (Exception e) {
-            throw Throwables.propagate(e);
-        }
     }
 
     public static void updateVarianceState(VarianceState state, double value)
@@ -97,5 +58,37 @@ public final class AggregationUtils
         state.setM2(state.getM2() + m2Delta);
         state.setCount(newCount);
         state.setMean(newMean);
+    }
+
+    public static Type getTypeInstance(Class<?> clazz)
+    {
+        try {
+            return (Type) clazz.getMethod("getInstance").invoke(null);
+        }
+        catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    public static Type getOutputType(@Nullable Method outputFunction, AccumulatorStateSerializer<?> serializer)
+    {
+        if (outputFunction == null) {
+            return serializer.getSerializedType();
+        }
+        else {
+            return getTypeInstance(outputFunction.getAnnotation(OutputFunction.class).value());
+        }
+    }
+
+    public static String generateAggregationName(String baseName, Type outputType, List<Type> inputTypes)
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.append(CaseFormat.LOWER_CAMEL.to(CaseFormat.UPPER_CAMEL, outputType.getName()));
+        for (Type inputType : inputTypes) {
+            sb.append(CaseFormat.LOWER_CAMEL.to(CaseFormat.UPPER_CAMEL, inputType.getName()));
+        }
+        sb.append(CaseFormat.LOWER_UNDERSCORE.to(CaseFormat.UPPER_CAMEL, baseName.toLowerCase()));
+
+        return sb.toString();
     }
 }

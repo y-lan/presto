@@ -16,6 +16,7 @@ package com.facebook.presto.metadata;
 import com.facebook.presto.connector.informationSchema.InformationSchemaMetadata;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.spi.ConnectorInsertTableHandle;
 import com.facebook.presto.spi.ConnectorMetadata;
 import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorSession;
@@ -62,9 +63,12 @@ import static com.facebook.presto.metadata.MetadataUtil.checkColumnName;
 import static com.facebook.presto.metadata.QualifiedTableName.convertFromSchemaTableName;
 import static com.facebook.presto.metadata.ViewDefinition.ViewColumn;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_VIEW;
+import static com.facebook.presto.spi.StandardErrorCode.NOT_FOUND;
+import static com.facebook.presto.spi.StandardErrorCode.SYNTAX_ERROR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.Iterables.transform;
+import static java.lang.String.format;
 
 public class MetadataManager
         implements Metadata
@@ -343,6 +347,21 @@ public class MetadataManager
     }
 
     @Override
+    public void renameTable(TableHandle tableHandle, QualifiedTableName newTableName)
+    {
+        String catalogName = newTableName.getCatalogName();
+        ConnectorMetadataEntry target = connectorsByCatalog.get(catalogName);
+        if (target == null) {
+            throw new PrestoException(NOT_FOUND.toErrorCode(), format("Target catalog '%s' does not exist", catalogName));
+        }
+        if (!tableHandle.getConnectorId().equals(target.getConnectorId())) {
+            throw new PrestoException(SYNTAX_ERROR.toErrorCode(), "Cannot rename tables across catalogs");
+        }
+
+        lookupConnectorFor(tableHandle).renameTable(tableHandle.getConnectorHandle(), newTableName.asSchemaTableName());
+    }
+
+    @Override
     public void dropTable(TableHandle tableHandle)
     {
         lookupConnectorFor(tableHandle).dropTable(tableHandle.getConnectorHandle());
@@ -361,6 +380,19 @@ public class MetadataManager
     public void commitCreateTable(OutputTableHandle tableHandle, Collection<String> fragments)
     {
         lookupConnectorFor(tableHandle).commitCreateTable(tableHandle.getConnectorHandle(), fragments);
+    }
+
+    @Override
+    public InsertTableHandle beginInsert(ConnectorSession session, TableHandle tableHandle)
+    {
+        ConnectorInsertTableHandle handle = lookupConnectorFor(tableHandle).beginInsert(session, tableHandle.getConnectorHandle());
+        return new InsertTableHandle(tableHandle.getConnectorId(), handle);
+    }
+
+    @Override
+    public void commitInsert(InsertTableHandle tableHandle, Collection<String> fragments)
+    {
+        lookupConnectorFor(tableHandle).commitInsert(tableHandle.getConnectorHandle(), fragments);
     }
 
     @Override
@@ -437,6 +469,18 @@ public class MetadataManager
         connectorMetadata.getMetadata().dropView(session, viewName.asSchemaTableName());
     }
 
+    @Override
+    public FunctionRegistry getFunctionRegistry()
+    {
+        return functions;
+    }
+
+    @Override
+    public TypeManager getTypeManager()
+    {
+        return typeManager;
+    }
+
     private ViewDefinition deserializeView(String data)
     {
         try {
@@ -470,19 +514,24 @@ public class MetadataManager
 
     private ConnectorMetadata lookupConnectorFor(TableHandle tableHandle)
     {
-        checkNotNull(tableHandle, "tableHandle is null");
-
-        ConnectorMetadata result = connectorsById.get(tableHandle.getConnectorId());
-        checkArgument(result != null, "No connector for table handle: %s", tableHandle.getConnectorId());
-
-        return result;
+        return getConnectorMetadata(tableHandle.getConnectorId());
     }
 
     private ConnectorMetadata lookupConnectorFor(OutputTableHandle tableHandle)
     {
-        ConnectorMetadata metadata = connectorsById.get(tableHandle.getConnectorId());
-        checkArgument(metadata != null, "No connector for output table handle: %s", tableHandle.getConnectorId());
-        return metadata;
+        return getConnectorMetadata(tableHandle.getConnectorId());
+    }
+
+    private ConnectorMetadata lookupConnectorFor(InsertTableHandle tableHandle)
+    {
+        return getConnectorMetadata(tableHandle.getConnectorId());
+    }
+
+    private ConnectorMetadata getConnectorMetadata(String connectorId)
+    {
+        ConnectorMetadata result = connectorsById.get(connectorId);
+        checkArgument(result != null, "No connector for connector ID: %s", connectorId);
+        return result;
     }
 
     private static class ConnectorMetadataEntry

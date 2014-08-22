@@ -14,19 +14,16 @@
 package com.facebook.presto.spi.type;
 
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockEncodingFactory;
 import com.facebook.presto.spi.block.VariableWidthBlockBuilder;
-import com.facebook.presto.spi.block.VariableWidthBlockEncoding.VariableWidthBlockEncodingFactory;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import io.airlift.slice.Slice;
-import io.airlift.slice.SliceOutput;
-
-import static java.nio.charset.StandardCharsets.UTF_8;
+import io.airlift.slice.Slices;
 
 public class VarcharType
-        implements VariableWidthType
+        extends AbstractVariableWidthType
 {
     public static final VarcharType VARCHAR = new VarcharType();
 
@@ -35,96 +32,97 @@ public class VarcharType
         return VARCHAR;
     }
 
-    public static final BlockEncodingFactory<?> BLOCK_ENCODING_FACTORY = new VariableWidthBlockEncodingFactory(VARCHAR);
-
     @JsonCreator
     public VarcharType()
     {
+        super("varchar", Slice.class);
     }
 
     @Override
-    public String getName()
+    public boolean isComparable()
     {
-        return "varchar";
+        return true;
     }
 
     @Override
-    public Class<?> getJavaType()
+    public boolean isOrderable()
     {
-        return Slice.class;
+        return true;
     }
 
     @Override
-    public Object getObjectValue(ConnectorSession session, Slice slice, int offset, int length)
+    public Object getObjectValue(ConnectorSession session, Block block, int position)
     {
-        return slice.toString(offset, length, UTF_8);
+        if (block.isNull(position)) {
+            return null;
+        }
+
+        return block.getSlice(position, 0, block.getLength(position)).toStringUtf8();
     }
 
     @Override
-    public Slice getSlice(Slice slice, int offset, int length)
+    public boolean equalTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
     {
-        return slice.slice(offset, length);
+        int leftLength = leftBlock.getLength(leftPosition);
+        int rightLength = rightBlock.getLength(rightPosition);
+        if (leftLength != rightLength) {
+            return false;
+        }
+        return leftBlock.equals(leftPosition, 0, rightBlock, rightPosition, 0, leftLength);
     }
 
     @Override
-    public int writeSlice(SliceOutput sliceOutput, Slice value, int offset, int length)
+    public int hash(Block block, int position)
     {
-        sliceOutput.writeBytes(value, offset, length);
-        return length;
+        return block.hash(position, 0, block.getLength(position));
+    }
+
+    @Override
+    public int compareTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
+    {
+        int leftLength = leftBlock.getLength(leftPosition);
+        int rightLength = rightBlock.getLength(rightPosition);
+        return leftBlock.compareTo(leftPosition, 0, leftLength, rightBlock, rightPosition, 0, rightLength);
+    }
+
+    @Override
+    public void appendTo(Block block, int position, BlockBuilder blockBuilder)
+    {
+        if (block.isNull(position)) {
+            blockBuilder.appendNull();
+        }
+        else {
+            block.writeBytesTo(position, 0, block.getLength(position), blockBuilder);
+            blockBuilder.closeEntry();
+        }
+    }
+
+    @Override
+    public Slice getSlice(Block block, int position)
+    {
+        return block.getSlice(position, 0, block.getLength(position));
+    }
+
+    public void writeString(BlockBuilder blockBuilder, String value)
+    {
+        writeSlice(blockBuilder, Slices.utf8Slice(value));
+    }
+
+    @Override
+    public void writeSlice(BlockBuilder blockBuilder, Slice value)
+    {
+        writeSlice(blockBuilder, value, 0, value.length());
+    }
+
+    @Override
+    public void writeSlice(BlockBuilder blockBuilder, Slice value, int offset, int length)
+    {
+        blockBuilder.writeBytes(value, offset, length).closeEntry();
     }
 
     @Override
     public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus)
     {
-        return new VariableWidthBlockBuilder(this, blockBuilderStatus);
-    }
-
-    @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, int leftLength, Slice rightSlice, int rightOffset, int rightLength)
-    {
-        return leftSlice.equals(leftOffset, leftLength, rightSlice, rightOffset, rightLength);
-    }
-
-    @Override
-    public int hash(Slice slice, int offset, int length)
-    {
-        return slice.hashCode(offset, length);
-    }
-
-    @Override
-    public int compareTo(Slice leftSlice, int leftOffset, int leftLength, Slice rightSlice, int rightOffset, int rightLength)
-    {
-        return leftSlice.compareTo(leftOffset, leftLength, rightSlice, rightOffset, rightLength);
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, int length, BlockBuilder blockBuilder)
-    {
-        blockBuilder.appendSlice(slice, offset, length);
-    }
-
-    @Override
-    public boolean equals(Object o)
-    {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-
-        return true;
-    }
-
-    @Override
-    public int hashCode()
-    {
-        return getClass().hashCode();
-    }
-
-    @Override
-    public String toString()
-    {
-        return getName();
+        return new VariableWidthBlockBuilder(blockBuilderStatus);
     }
 }
