@@ -724,7 +724,8 @@ public class PrestoResultSet
     public void setFetchSize(int rows)
             throws SQLException
     {
-        throw new UnsupportedOperationException("setFetchSize");
+        // todo : better way than just ignore this ??
+        //throw new UnsupportedOperationException("setFetchSize");
     }
 
     @Override

@@ -45,7 +45,6 @@ public class TdjobSplitManager
         this.tdjobClient = checkNotNull(tdjobClient, "client is null");
     }
 
-    @Override
     public String getConnectorId()
     {
         return connectorId;

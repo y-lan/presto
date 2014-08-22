@@ -100,7 +100,6 @@ public class PrestoServer
                 new JsonEventModule(),
                 new HttpEventModule(),
                 new EmbeddedDiscoveryModule(),
-                new ServerMainModule(),
                 new Module()
                 {
                     @Override

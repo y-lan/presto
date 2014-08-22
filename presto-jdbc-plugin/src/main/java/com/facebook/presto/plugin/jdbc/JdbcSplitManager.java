@@ -39,7 +39,6 @@ public class JdbcSplitManager
         this.jdbcClient = checkNotNull(jdbcClient, "client is null");
     }
 
-    @Override
     public String getConnectorId()
     {
         return connectorId;
