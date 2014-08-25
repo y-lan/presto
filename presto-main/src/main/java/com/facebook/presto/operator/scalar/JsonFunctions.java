@@ -13,6 +13,9 @@
  */
 package com.facebook.presto.operator.scalar;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.parser.Feature;
 import com.facebook.presto.metadata.OperatorType;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.BooleanType;
@@ -24,11 +27,12 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.google.common.base.Charsets;
+import com.google.common.base.Joiner;
 import com.google.common.primitives.Doubles;
 import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 
 import javax.annotation.Nullable;
-
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
@@ -50,7 +54,9 @@ public final class JsonFunctions
     private static final JsonFactory JSON_FACTORY = new JsonFactory()
             .disable(CANONICALIZE_FIELD_NAMES);
 
-    private JsonFunctions() {}
+    private JsonFunctions()
+    {
+    }
 
     @ScalarOperator(OperatorType.CAST)
     @SqlType(JsonPathType.class)
@@ -294,5 +300,40 @@ public final class JsonFunctions
     public static Long jsonSize(@SqlType(VarcharType.class) Slice json, @SqlType(JsonPathType.class) JsonPath jsonPath)
     {
         return JsonExtract.extract(json, jsonPath.getSizeExtractor());
+    }
+
+    @ScalarFunction
+    @Nullable
+    @SqlType(VarcharType.class)
+    public static Slice jsonExtractKeys(@SqlType(VarcharType.class) Slice json)
+    {
+        try {
+            JSONObject jsonObject = JSON.parseObject(json.toStringUtf8(), Feature.DisableCircularReferenceDetect);
+            return Slices.utf8Slice(Joiner.on(',').join(jsonObject.keySet()));
+        }
+        catch (Exception e) {
+            return null;
+        }
+    }
+
+    @ScalarFunction
+    @Nullable
+    @SqlType(VarcharType.class)
+    public static Slice jsonGet(@SqlType(VarcharType.class) Slice json, @SqlType(VarcharType.class) Slice key)
+    {
+        try {
+            JSONObject jsonObject = JSON.parseObject(json.toStringUtf8(), Feature.DisableCircularReferenceDetect);
+            String k = key.toStringUtf8();
+
+            if (jsonObject.containsKey(k)) {
+                return Slices.utf8Slice(jsonObject.get(k).toString());
+            }
+            else {
+                return null;
+            }
+        }
+        catch (Exception e) {
+            return null;
+        }
     }
 }

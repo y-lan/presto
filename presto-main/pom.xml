@@ -251,6 +251,11 @@
             <artifactId>asm-all</artifactId>
         </dependency>
 
+        <dependency>
+          <groupId>com.alibaba</groupId>
+          <artifactId>fastjson</artifactId>
+        </dependency>
+
         <!-- for testing -->
         <dependency>
             <groupId>org.testng</groupId>
