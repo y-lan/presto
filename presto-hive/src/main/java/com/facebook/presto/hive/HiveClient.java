@@ -15,6 +15,7 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.hadoop.HadoopFileSystemCache;
 import com.facebook.presto.hadoop.HadoopNative;
+import com.facebook.presto.hive.metastore.CachingHiveMetastore;
 import com.facebook.presto.hive.metastore.HiveMetastore;
 import com.facebook.presto.hive.util.BoundedExecutor;
 import com.facebook.presto.spi.ColumnMetadata;
@@ -165,6 +166,7 @@ public class HiveClient
     private final boolean recursiveDfsWalkerEnabled;
 
     private static final String HIVE_INVISIBLE_PROPERTY = "presto_invisible";
+    private static final String HIVE_INVISIBLE_EXCLUDE_PROPERTY = "presto_invisible_survivors";
     private static final String HIVE_INVISIBLE_PROPERTY_TRUE = "true";
 
     @Inject
@@ -257,8 +259,37 @@ public class HiveClient
         checkNotNull(tableName, "tableName is null");
         try {
             Table table = metastore.getTable(tableName.getSchemaName(), tableName.getTableName());
+            // set as hide from presto
             if (isTableInvisible(table)) {
-                return null;
+                boolean canExclude = false;
+                String user = session.getUser();
+
+                // but there's exception
+                String excludes = table.getParameters().get(HIVE_INVISIBLE_EXCLUDE_PROPERTY);
+                if (excludes != null && !excludes.isEmpty() && metastore instanceof CachingHiveMetastore) {
+                    List<String> roles;
+                    try {
+                        roles = ((CachingHiveMetastore) metastore).getRoles(user);
+                    }
+                    catch (Exception e) {
+                        return null;
+                    }
+
+                    for (String s : excludes.split(",")) {
+                        String exclude = s.trim();
+                        if (exclude.startsWith("g:")) {
+                            if (roles.contains(exclude.substring(2))) {
+                                canExclude = true;
+                            }
+                        }
+                        else if (user.equals(exclude)) {
+                            canExclude = true;
+                        }
+                    }
+                }
+                if (!canExclude) {
+                    return null;
+                }
             }
 
             return new HiveTableHandle(connectorId, tableName.getSchemaName(), tableName.getTableName(), session);

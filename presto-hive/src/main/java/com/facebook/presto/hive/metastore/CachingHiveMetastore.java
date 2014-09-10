@@ -33,6 +33,7 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.UncheckedExecutionException;
@@ -42,16 +43,21 @@ import org.apache.hadoop.hive.metastore.TableType;
 import org.apache.hadoop.hive.metastore.Warehouse;
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
 import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.GetRoleGrantsForPrincipalRequest;
+import org.apache.hadoop.hive.metastore.api.GetRoleGrantsForPrincipalResponse;
 import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
 import org.apache.hadoop.hive.metastore.api.InvalidOperationException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Partition;
+import org.apache.hadoop.hive.metastore.api.PrincipalType;
+import org.apache.hadoop.hive.metastore.api.RolePrincipalGrant;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.api.UnknownDBException;
 import org.weakref.jmx.Flatten;
 import org.weakref.jmx.Managed;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.inject.Inject;
 
@@ -893,6 +899,34 @@ public class CachingHiveMetastore
         public int hashCode()
         {
             return Objects.hashCode(hiveTableName, parts);
+        }
+    }
+
+    public List<String> getRoles(String username) throws Exception
+    {
+        try (HiveMetastoreClient client = clientProvider.createMetastoreClient()) {
+            GetRoleGrantsForPrincipalRequest request = new GetRoleGrantsForPrincipalRequest();
+            request.setPrincipal_name(username);
+            request.setPrincipal_type(PrincipalType.USER);
+            try {
+                GetRoleGrantsForPrincipalResponse response = client.get_role_grants_for_principal(request);
+
+                List<String> roles = Lists.transform(response.getPrincipalGrants(), new Function<RolePrincipalGrant, String>()
+                {
+                    @Nullable
+                    @Override
+                    public String apply(@Nullable RolePrincipalGrant input)
+                    {
+                        return input.getRoleName();
+                    }
+                });
+
+                return roles;
+
+            }
+            catch (TException e) {
+                throw new PrestoException(HiveErrorCode.HIVE_METASTORE_ERROR.toErrorCode(), e);
+            }
         }
     }
 }
