@@ -13,8 +13,8 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.execution.TaskId;
-import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.base.Function;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -123,7 +123,7 @@ public class PipelineContext
         return ImmutableList.copyOf(drivers);
     }
 
-    public ConnectorSession getSession()
+    public Session getSession()
     {
         return taskContext.getSession();
     }
@@ -383,6 +383,7 @@ public class PipelineContext
     {
         return new Function<PipelineContext, PipelineStats>()
         {
+            @Override
             public PipelineStats apply(PipelineContext pipelineContext)
             {
                 return pipelineContext.getPipelineStats();

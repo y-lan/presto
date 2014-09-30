@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.server;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.client.Column;
 import com.facebook.presto.client.FailureInfo;
 import com.facebook.presto.client.QueryError;
@@ -27,13 +28,12 @@ import com.facebook.presto.execution.QueryState;
 import com.facebook.presto.execution.QueryStats;
 import com.facebook.presto.execution.StageInfo;
 import com.facebook.presto.execution.StageState;
+import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.operator.ExchangeClient;
-import com.facebook.presto.operator.Page;
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.block.Block;
-import com.facebook.presto.spi.type.TimeZoneKey;
-import com.facebook.presto.spi.type.TimeZoneNotSupportedException;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.util.IterableTransformer;
 import com.google.common.base.Preconditions;
@@ -57,7 +57,6 @@ import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
-import javax.ws.rs.HeaderParam;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -77,30 +76,23 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
-import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_CATALOG;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_LANGUAGE;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_SCHEMA;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_SOURCE;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_TIME_ZONE;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_USER;
 import static com.facebook.presto.execution.QueryInfo.queryIdGetter;
 import static com.facebook.presto.execution.StageInfo.getAllStages;
 import static com.facebook.presto.execution.StageInfo.stageStateGetter;
+import static com.facebook.presto.server.ResourceUtil.assertRequest;
+import static com.facebook.presto.server.ResourceUtil.createSessionForRequest;
 import static com.facebook.presto.util.Failures.toFailure;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.Iterables.transform;
-import static com.google.common.net.HttpHeaders.USER_AGENT;
 import static io.airlift.concurrent.Threads.threadsNamed;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
@@ -141,65 +133,18 @@ public class StatementResource
     @Produces(MediaType.APPLICATION_JSON)
     public Response createQuery(
             String statement,
-            @HeaderParam(PRESTO_USER) String user,
-            @HeaderParam(PRESTO_SOURCE) String source,
-            @HeaderParam(PRESTO_CATALOG) String catalog,
-            @HeaderParam(PRESTO_SCHEMA) String schema,
-            @HeaderParam(PRESTO_TIME_ZONE) String timeZoneId,
-            @HeaderParam(PRESTO_LANGUAGE) String language,
-            @HeaderParam(USER_AGENT) String userAgent,
-            @Context HttpServletRequest requestContext,
+            @Context HttpServletRequest servletRequest,
             @Context UriInfo uriInfo)
             throws InterruptedException
     {
         assertRequest(!isNullOrEmpty(statement), "SQL statement is empty");
-        assertRequest(!isNullOrEmpty(user), "User (%s) is empty", PRESTO_USER);
-        assertRequest(!isNullOrEmpty(catalog), "Catalog (%s) is empty", PRESTO_CATALOG);
-        assertRequest(!isNullOrEmpty(schema), "Schema (%s) is empty", PRESTO_SCHEMA);
 
-        if (timeZoneId == null) {
-            timeZoneId = TimeZone.getDefault().getID();
-        }
-
-        Locale locale = Locale.getDefault();
-        if (language != null) {
-            locale = Locale.forLanguageTag(language);
-        }
-
-        String remoteUserAddress = requestContext.getRemoteAddr();
-
-        ConnectorSession session = new ConnectorSession(user, source, catalog, schema, getTimeZoneKey(timeZoneId), locale, remoteUserAddress, userAgent);
+        Session session = createSessionForRequest(servletRequest);
 
         ExchangeClient exchangeClient = exchangeClientSupplier.get();
         Query query = new Query(session, statement, queryManager, exchangeClient);
         queries.put(query.getQueryId(), query);
         return Response.ok(query.getNextResults(uriInfo, new Duration(1, TimeUnit.MILLISECONDS))).build();
-    }
-
-    static void assertRequest(boolean expression, String format, Object... args)
-    {
-        if (!expression) {
-            throw badRequest(format(format, args));
-        }
-    }
-
-    static TimeZoneKey getTimeZoneKey(String timeZoneId)
-    {
-        try {
-            return TimeZoneKey.getTimeZoneKey(timeZoneId);
-        }
-        catch (TimeZoneNotSupportedException e) {
-            throw badRequest(e.getMessage());
-        }
-    }
-
-    private static WebApplicationException badRequest(String message)
-    {
-        throw new WebApplicationException(Response
-                .status(Status.BAD_REQUEST)
-                .type(MediaType.TEXT_PLAIN)
-                .entity(message)
-                .build());
     }
 
     @GET
@@ -244,7 +189,7 @@ public class StatementResource
         private final ExchangeClient exchangeClient;
 
         private final AtomicLong resultId = new AtomicLong();
-        private final ConnectorSession session;
+        private final Session session;
 
         @GuardedBy("this")
         private QueryResults lastResult;
@@ -255,7 +200,7 @@ public class StatementResource
         @GuardedBy("this")
         private List<Column> columns;
 
-        public Query(ConnectorSession session,
+        public Query(Session session,
                 String query,
                 QueryManager queryManager,
                 ExchangeClient exchangeClient)
@@ -402,8 +347,8 @@ public class StatementResource
                 if (page == null) {
                     break;
                 }
-                bytes += page.getDataSize().toBytes();
-                pages.add(new RowIterable(session, types, page));
+                bytes += page.getSizeInBytes();
+                pages.add(new RowIterable(session.toConnectorSession(), types, page));
 
                 // only wait on first call
                 maxWait = new Duration(0, TimeUnit.MILLISECONDS);
@@ -428,13 +373,17 @@ public class StatementResource
             if (!outputStage.getState().isDone()) {
                 for (TaskInfo taskInfo : outputStage.getTasks()) {
                     List<BufferInfo> buffers = taskInfo.getOutputBuffers().getBuffers();
+                    if (buffers.isEmpty()) {
+                        // output buffer has not been created yet
+                        continue;
+                    }
                     Preconditions.checkState(buffers.size() == 1,
                             "Expected a single output buffer for task %s, but found %s",
                             taskInfo.getTaskId(),
                             buffers);
 
-                    String bufferId = Iterables.getOnlyElement(buffers).getBufferId();
-                    URI uri = uriBuilderFrom(taskInfo.getSelf()).appendPath("results").appendPath(bufferId).build();
+                    TaskId bufferId = Iterables.getOnlyElement(buffers).getBufferId();
+                    URI uri = uriBuilderFrom(taskInfo.getSelf()).appendPath("results").appendPath(bufferId.toString()).build();
                     exchangeClient.addLocation(uri);
                 }
             }
@@ -453,9 +402,7 @@ public class StatementResource
         {
             checkNotNull(queryInfo, "queryInfo is null");
             StageInfo outputStage = queryInfo.getOutputStage();
-            if (outputStage == null) {
-                checkNotNull(outputStage, "outputStage is null");
-            }
+            checkNotNull(outputStage, "outputStage is null");
 
             List<String> names = queryInfo.getFieldNames();
             List<Type> types = outputStage.getTypes();

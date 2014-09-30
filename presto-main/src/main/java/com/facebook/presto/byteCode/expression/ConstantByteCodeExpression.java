@@ -16,6 +16,7 @@ package com.facebook.presto.byteCode.expression;
 import com.facebook.presto.byteCode.ByteCodeNode;
 import com.facebook.presto.byteCode.ParameterizedType;
 import com.facebook.presto.byteCode.instruction.Constant;
+import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
@@ -45,14 +46,44 @@ class ConstantByteCodeExpression
     }
 
     @Override
-    public String toString()
+    protected String formatOneLine()
     {
-        return String.valueOf(value.getValue());
+        return renderConstant(value.getValue());
+    }
+
+    public static String renderConstant(Object value)
+    {
+        if (value instanceof Long) {
+            return value + "L";
+        }
+        if (value instanceof Float) {
+            return value + "f";
+        }
+        if (value instanceof ParameterizedType) {
+            return ((ParameterizedType) value).getSimpleName() + ".class";
+        }
+        // todo escape string
+        if (value instanceof String) {
+            return "\"" + value + "\"";
+        }
+        return String.valueOf(value);
     }
 
     @Override
     public List<ByteCodeNode> getChildNodes()
     {
         return ImmutableList.of();
+    }
+
+    public static Function<Object, String> constantRenderer()
+    {
+        return new Function<Object, String>()
+        {
+            @Override
+            public String apply(Object arg)
+            {
+                return renderConstant(arg);
+            }
+        };
     }
 }

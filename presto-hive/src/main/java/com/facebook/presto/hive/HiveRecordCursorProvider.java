@@ -13,17 +13,30 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.base.Optional;
-import org.apache.hadoop.mapred.RecordReader;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.joda.time.DateTimeZone;
 
 import java.util.List;
+import java.util.Properties;
 
 public interface HiveRecordCursorProvider
 {
     Optional<HiveRecordCursor> createHiveRecordCursor(
-            HiveSplit split,
-            RecordReader<?, ?> recordReader,
+            String clientId,
+            Configuration configuration,
+            ConnectorSession session,
+            Path path,
+            long start,
+            long length,
+            Properties schema,
             List<HiveColumnHandle> columns,
-            DateTimeZone hiveStorageTimeZone);
+            List<HivePartitionKey> partitionKeys,
+            TupleDomain<HiveColumnHandle> tupleDomain,
+            DateTimeZone hiveStorageTimeZone,
+            TypeManager typeManager);
 }

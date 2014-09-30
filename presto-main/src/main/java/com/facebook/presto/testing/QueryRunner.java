@@ -13,12 +13,14 @@
  */
 package com.facebook.presto.testing;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.metadata.QualifiedTableName;
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.Plugin;
 import org.intellij.lang.annotations.Language;
 
 import java.io.Closeable;
 import java.util.List;
+import java.util.Map;
 
 public interface QueryRunner
         extends Closeable
@@ -28,13 +30,17 @@ public interface QueryRunner
 
     int getNodeCount();
 
-    ConnectorSession getDefaultSession();
+    Session getDefaultSession();
 
     MaterializedResult execute(@Language("SQL") String sql);
 
-    MaterializedResult execute(ConnectorSession session, @Language("SQL") String sql);
+    MaterializedResult execute(Session session, @Language("SQL") String sql);
 
-    List<QualifiedTableName> listTables(ConnectorSession session, String catalog, String schema);
+    List<QualifiedTableName> listTables(Session session, String catalog, String schema);
 
-    boolean tableExists(ConnectorSession session, String table);
+    boolean tableExists(Session session, String table);
+
+    void installPlugin(Plugin plugin);
+
+    void createCatalog(String catalogName, String connectorName, Map<String, String> properties);
 }

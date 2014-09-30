@@ -15,6 +15,7 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.SchemaTableName;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
@@ -32,7 +33,7 @@ import static org.testng.Assert.assertTrue;
 @Test
 public class TestJsonHiveHandles
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "catalog", "test", UTC_KEY, Locale.ENGLISH, null, null);
+    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
 
     private static final Map<String, Object> TABLE_HANDLE_AS_MAP = ImmutableMap.<String, Object>of(
             "clientId", "hive",
@@ -40,8 +41,6 @@ public class TestJsonHiveHandles
             "tableName", "hive_table",
             "session", ImmutableMap.builder()
                     .put("user", SESSION.getUser())
-                    .put("source", SESSION.getSource())
-                    .put("catalog", SESSION.getCatalog())
                     .put("schema", SESSION.getSchema())
                     .put("timeZoneKey", (int) SESSION.getTimeZoneKey().getKey())
                     .put("locale", SESSION.getLocale().toString())
@@ -52,7 +51,8 @@ public class TestJsonHiveHandles
             .put("clientId", "hive")
             .put("name", "column")
             .put("ordinalPosition", 42)
-            .put("hiveType", "FLOAT")
+            .put("hiveType", "float")
+            .put("typeName", "double")
             .put("hiveColumnIndex", -1)
             .put("partitionKey", true)
             .build();
@@ -88,7 +88,7 @@ public class TestJsonHiveHandles
     public void testColumnHandleSerialize()
             throws Exception
     {
-        HiveColumnHandle columnHandle = new HiveColumnHandle("hive", "column", 42, HiveType.FLOAT, -1, true);
+        HiveColumnHandle columnHandle = new HiveColumnHandle("hive", "column", 42, HiveType.HIVE_FLOAT, StandardTypes.DOUBLE, -1, true);
 
         assertTrue(objectMapper.canSerialize(HiveColumnHandle.class));
         String json = objectMapper.writeValueAsString(columnHandle);
@@ -105,7 +105,7 @@ public class TestJsonHiveHandles
 
         assertEquals(columnHandle.getName(), "column");
         assertEquals(columnHandle.getOrdinalPosition(), 42);
-        assertEquals(columnHandle.getHiveType(), HiveType.FLOAT);
+        assertEquals(columnHandle.getHiveType(), HiveType.HIVE_FLOAT);
         assertEquals(columnHandle.getHiveColumnIndex(), -1);
         assertEquals(columnHandle.isPartitionKey(), true);
     }

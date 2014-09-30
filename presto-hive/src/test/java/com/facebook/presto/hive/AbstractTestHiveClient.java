@@ -19,9 +19,10 @@ import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorColumnHandle;
 import com.facebook.presto.spi.ConnectorMetadata;
 import com.facebook.presto.spi.ConnectorOutputTableHandle;
+import com.facebook.presto.spi.ConnectorPageSource;
+import com.facebook.presto.spi.ConnectorPageSourceProvider;
 import com.facebook.presto.spi.ConnectorPartition;
 import com.facebook.presto.spi.ConnectorPartitionResult;
-import com.facebook.presto.spi.ConnectorRecordSetProvider;
 import com.facebook.presto.spi.ConnectorRecordSinkProvider;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorSplit;
@@ -30,15 +31,23 @@ import com.facebook.presto.spi.ConnectorSplitSource;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.Domain;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.RecordCursor;
-import com.facebook.presto.spi.RecordSet;
+import com.facebook.presto.spi.RecordPageSource;
 import com.facebook.presto.spi.RecordSink;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SchemaTablePrefix;
 import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.spi.ViewNotFoundException;
+import com.facebook.presto.spi.type.SqlDate;
+import com.facebook.presto.spi.type.SqlTimestamp;
+import com.facebook.presto.spi.type.SqlVarbinary;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.testing.MaterializedResult;
+import com.facebook.presto.testing.MaterializedRow;
+import com.facebook.presto.type.TypeRegistry;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -49,6 +58,8 @@ import com.google.common.net.HostAndPort;
 import io.airlift.units.Duration;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.util.HashSet;
@@ -61,15 +72,22 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
 import static com.facebook.presto.hive.HiveBucketing.HiveBucket;
+import static com.facebook.presto.hive.HiveTestUtils.DEFAULT_HIVE_RECORD_CURSOR_PROVIDERS;
+import static com.facebook.presto.hive.HiveTestUtils.TYPE_MANAGER;
+import static com.facebook.presto.hive.HiveTestUtils.getTypes;
+import static com.facebook.presto.hive.HiveType.HIVE_INT;
+import static com.facebook.presto.hive.HiveType.HIVE_STRING;
 import static com.facebook.presto.hive.HiveUtil.partitionIdGetter;
 import static com.facebook.presto.hive.util.Types.checkType;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.testing.MaterializedResult.materializeSourceDataStream;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.collect.Maps.uniqueIndex;
@@ -89,14 +107,14 @@ import static org.testng.Assert.fail;
 @Test(groups = "hive")
 public abstract class AbstractTestHiveClient
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "default", "default", UTC_KEY, Locale.ENGLISH, null, null);
+    private static final ConnectorSession SESSION = new ConnectorSession("user", "default", UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
 
     protected static final String INVALID_DATABASE = "totally_invalid_database_name";
     protected static final String INVALID_TABLE = "totally_invalid_table_name";
     protected static final String INVALID_COLUMN = "totally_invalid_column_name";
 
     protected String database;
-    protected SchemaTableName table;
+    protected SchemaTableName tablePartitionFormat;
     protected SchemaTableName tableUnpartitioned;
     protected SchemaTableName tableOffline;
     protected SchemaTableName tableOfflinePartition;
@@ -105,6 +123,7 @@ public abstract class AbstractTestHiveClient
     protected SchemaTableName tableBucketedStringInt;
     protected SchemaTableName tableBucketedBigintBoolean;
     protected SchemaTableName tableBucketedDoubleFloat;
+    protected SchemaTableName tablePartitionSchemaChange;
 
     protected SchemaTableName temporaryCreateTable;
     protected SchemaTableName temporaryCreateSampledTable;
@@ -131,13 +150,31 @@ public abstract class AbstractTestHiveClient
 
     protected ConnectorMetadata metadata;
     protected ConnectorSplitManager splitManager;
-    protected ConnectorRecordSetProvider recordSetProvider;
+    protected ConnectorPageSourceProvider pageSourceProvider;
     protected ConnectorRecordSinkProvider recordSinkProvider;
+    protected ExecutorService executor;
+
+    @BeforeClass
+    public void setUp()
+            throws Exception
+    {
+        executor = newCachedThreadPool(daemonThreadsNamed("hive-%s"));
+    }
+
+    @AfterClass
+    public void tearDown()
+            throws Exception
+    {
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
+    }
 
     protected void setupHive(String connectorId, String databaseName, String timeZoneId)
     {
         database = databaseName;
-        table = new SchemaTableName(database, "presto_test");
+        tablePartitionFormat = new SchemaTableName(database, "presto_test_partition_format");
         tableUnpartitioned = new SchemaTableName(database, "presto_test_unpartitioned");
         tableOffline = new SchemaTableName(database, "presto_test_offline");
         tableOfflinePartition = new SchemaTableName(database, "presto_test_offline_partition");
@@ -146,6 +183,7 @@ public abstract class AbstractTestHiveClient
         tableBucketedStringInt = new SchemaTableName(database, "presto_test_bucketed_by_string_int");
         tableBucketedBigintBoolean = new SchemaTableName(database, "presto_test_bucketed_by_bigint_boolean");
         tableBucketedDoubleFloat = new SchemaTableName(database, "presto_test_bucketed_by_double_float");
+        tablePartitionSchemaChange = new SchemaTableName(database, "presto_test_partition_schema_change");
 
         temporaryCreateTable = new SchemaTableName(database, "tmp_presto_test_create_" + randomName());
         temporaryCreateSampledTable = new SchemaTableName(database, "tmp_presto_test_create_" + randomName());
@@ -156,29 +194,46 @@ public abstract class AbstractTestHiveClient
 
         invalidTableHandle = new HiveTableHandle("hive", database, INVALID_TABLE, SESSION);
 
-        dsColumn = new HiveColumnHandle(connectorId, "ds", 0, HiveType.STRING, -1, true);
-        fileFormatColumn = new HiveColumnHandle(connectorId, "file_format", 1, HiveType.STRING, -1, true);
-        dummyColumn = new HiveColumnHandle(connectorId, "dummy", 2, HiveType.INT, -1, true);
-        intColumn = new HiveColumnHandle(connectorId, "t_int", 0, HiveType.INT, -1, true);
-        invalidColumnHandle = new HiveColumnHandle(connectorId, INVALID_COLUMN, 0, HiveType.STRING, 0, false);
+        dsColumn = new HiveColumnHandle(connectorId, "ds", 0, HIVE_STRING, StandardTypes.VARCHAR, -1, true);
+        fileFormatColumn = new HiveColumnHandle(connectorId, "file_format", 1, HIVE_STRING, StandardTypes.VARCHAR, -1, true);
+        dummyColumn = new HiveColumnHandle(connectorId, "dummy", 2, HIVE_INT, StandardTypes.BIGINT, -1, true);
+        intColumn = new HiveColumnHandle(connectorId, "t_int", 0, HIVE_INT, StandardTypes.BIGINT, -1, true);
+        invalidColumnHandle = new HiveColumnHandle(connectorId, INVALID_COLUMN, 0, HIVE_STRING, StandardTypes.VARCHAR, 0, false);
 
-        partitions = ImmutableSet.<ConnectorPartition>of(
-                new HivePartition(table,
-                        "ds=2012-12-29/file_format=rcfile-text/dummy=0",
-                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>of(dsColumn, utf8Slice("2012-12-29"), fileFormatColumn, utf8Slice("rcfile-text"), dummyColumn, 0L),
-                        Optional.<HiveBucket>absent()),
-                new HivePartition(table,
-                        "ds=2012-12-29/file_format=rcfile-binary/dummy=2",
-                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>of(dsColumn, utf8Slice("2012-12-29"), fileFormatColumn, utf8Slice("rcfile-binary"), dummyColumn, 2L),
-                        Optional.<HiveBucket>absent()),
-                new HivePartition(table,
-                        "ds=2012-12-29/file_format=sequencefile/dummy=4",
-                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>of(dsColumn, utf8Slice("2012-12-29"), fileFormatColumn, utf8Slice("sequencefile"), dummyColumn, 4L),
-                        Optional.<HiveBucket>absent()),
-                new HivePartition(table,
-                        "ds=2012-12-29/file_format=textfile/dummy=6",
-                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>of(dsColumn, utf8Slice("2012-12-29"), fileFormatColumn, utf8Slice("textfile"), dummyColumn, 6L),
-                        Optional.<HiveBucket>absent()));
+        partitions = ImmutableSet.<ConnectorPartition>builder()
+                .add(new HivePartition(tablePartitionFormat,
+                        "ds=2012-12-29/file_format=textfile/dummy=1",
+                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
+                                .put(dsColumn, utf8Slice("2012-12-29"))
+                                .put(fileFormatColumn, utf8Slice("textfile"))
+                                .put(dummyColumn, 1L)
+                                .build(),
+                        Optional.<HiveBucket>absent()))
+                .add(new HivePartition(tablePartitionFormat,
+                        "ds=2012-12-29/file_format=sequencefile/dummy=2",
+                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
+                                .put(dsColumn, utf8Slice("2012-12-29"))
+                                .put(fileFormatColumn, utf8Slice("sequencefile"))
+                                .put(dummyColumn, 2L)
+                                .build(),
+                        Optional.<HiveBucket>absent()))
+                .add(new HivePartition(tablePartitionFormat,
+                        "ds=2012-12-29/file_format=rcfile-text/dummy=3",
+                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
+                                .put(dsColumn, utf8Slice("2012-12-29"))
+                                .put(fileFormatColumn, utf8Slice("rcfile-text"))
+                                .put(dummyColumn, 3L)
+                                .build(),
+                        Optional.<HiveBucket>absent()))
+                .add(new HivePartition(tablePartitionFormat,
+                        "ds=2012-12-29/file_format=rcfile-binary/dummy=4",
+                        ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
+                                .put(dsColumn, utf8Slice("2012-12-29"))
+                                .put(fileFormatColumn, utf8Slice("rcfile-binary"))
+                                .put(dummyColumn, 4L)
+                                .build(),
+                        Optional.<HiveBucket>absent()))
+                .build();
         unpartitionedPartitions = ImmutableSet.<ConnectorPartition>of(new HivePartition(tableUnpartitioned));
         invalidPartition = new HivePartition(invalidTable, "unknown", ImmutableMap.<ConnectorColumnHandle, Comparable<?>>of(), Optional.<HiveBucket>absent());
         timeZone = DateTimeZone.forTimeZone(TimeZone.getTimeZone(timeZoneId));
@@ -194,21 +249,22 @@ public abstract class AbstractTestHiveClient
         setupHive(connectorName, databaseName, timeZoneId);
 
         HiveClientConfig hiveClientConfig = new HiveClientConfig();
+        hiveClientConfig.setTimeZone(timeZoneId);
         String proxy = System.getProperty("hive.metastore.thrift.client.socks-proxy");
         if (proxy != null) {
             hiveClientConfig.setMetastoreSocksProxy(HostAndPort.fromString(proxy));
         }
 
         HiveCluster hiveCluster = new TestingHiveCluster(hiveClientConfig, host, port);
-        ExecutorService executor = newCachedThreadPool(daemonThreadsNamed("hive-%s"));
 
         metastoreClient = new CachingHiveMetastore(hiveCluster, executor, Duration.valueOf("1m"), Duration.valueOf("15s"));
 
+        HdfsEnvironment hdfsEnvironment = new HdfsEnvironment(new HdfsConfiguration(hiveClientConfig));
         HiveClient client = new HiveClient(
                 new HiveConnectorId(connectorName),
                 metastoreClient,
                 new NamenodeStats(),
-                new HdfsEnvironment(new HdfsConfiguration(hiveClientConfig)),
+                hdfsEnvironment,
                 new HadoopDirectoryLister(),
                 timeZone,
                 sameThreadExecutor(),
@@ -221,13 +277,16 @@ public abstract class AbstractTestHiveClient
                 hiveClientConfig.getMaxInitialSplits(),
                 false,
                 true,
+                true,
                 hiveClientConfig.getHiveStorageFormat(),
-                false);
+                false,
+                new TypeRegistry());
 
         metadata = client;
         splitManager = client;
-        recordSetProvider = client;
         recordSinkProvider = client;
+
+        pageSourceProvider = new HivePageSourceProvider(hiveClientConfig, hdfsEnvironment, DEFAULT_HIVE_RECORD_CURSOR_PROVIDERS, TYPE_MANAGER);
     }
 
     @Test
@@ -243,7 +302,7 @@ public abstract class AbstractTestHiveClient
             throws Exception
     {
         List<SchemaTableName> tables = metadata.listTables(SESSION, database);
-        assertTrue(tables.contains(table));
+        assertTrue(tables.contains(tablePartitionFormat));
     }
 
     @Test
@@ -260,7 +319,7 @@ public abstract class AbstractTestHiveClient
     public void testGetPartitions()
             throws Exception
     {
-        ConnectorTableHandle tableHandle = getTableHandle(table);
+        ConnectorTableHandle tableHandle = getTableHandle(tablePartitionFormat);
         ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.<ConnectorColumnHandle>all());
         assertExpectedPartitions(partitionResult.getPartitions(), partitions);
     }
@@ -269,8 +328,8 @@ public abstract class AbstractTestHiveClient
     public void testGetPartitionsWithBindings()
             throws Exception
     {
-        ConnectorTableHandle tableHandle = getTableHandle(table);
-        ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.withColumnDomains(ImmutableMap.<ConnectorColumnHandle, Domain>of(intColumn, Domain.singleValue(5L))));
+        ConnectorTableHandle tableHandle = getTableHandle(tablePartitionFormat);
+        ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.withColumnDomains(ImmutableMap.of(intColumn, Domain.singleValue(5L))));
         assertExpectedPartitions(partitionResult.getPartitions(), partitions);
     }
 
@@ -285,7 +344,7 @@ public abstract class AbstractTestHiveClient
     public void testGetPartitionNames()
             throws Exception
     {
-        ConnectorTableHandle tableHandle = getTableHandle(table);
+        ConnectorTableHandle tableHandle = getTableHandle(tablePartitionFormat);
         ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.<ConnectorColumnHandle>all());
         assertExpectedPartitions(partitionResult.getPartitions(), partitions);
     }
@@ -330,10 +389,10 @@ public abstract class AbstractTestHiveClient
 
     @SuppressWarnings({"ValueOfIncrementOrDecrementUsed", "UnusedAssignment"})
     @Test
-    public void testGetTableSchema()
+    public void testGetTableSchemaPartitionFormat()
             throws Exception
     {
-        ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(getTableHandle(table));
+        ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(getTableHandle(tablePartitionFormat));
         Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
 
         int i = 0;
@@ -344,12 +403,7 @@ public abstract class AbstractTestHiveClient
         assertPrimitiveField(map, i++, "t_bigint", BIGINT, false);
         assertPrimitiveField(map, i++, "t_float", DOUBLE, false);
         assertPrimitiveField(map, i++, "t_double", DOUBLE, false);
-        assertPrimitiveField(map, i++, "t_map", VARCHAR, false); // Currently mapped as a string
         assertPrimitiveField(map, i++, "t_boolean", BOOLEAN, false);
-        assertPrimitiveField(map, i++, "t_timestamp", TIMESTAMP, false);
-        assertPrimitiveField(map, i++, "t_binary", VARBINARY, false);
-        assertPrimitiveField(map, i++, "t_array_string", VARCHAR, false); // Currently mapped as a string
-        assertPrimitiveField(map, i++, "t_complex", VARCHAR, false); // Currently mapped as a string
         assertPrimitiveField(map, i++, "ds", VARCHAR, true);
         assertPrimitiveField(map, i++, "file_format", VARCHAR, true);
         assertPrimitiveField(map, i++, "dummy", BIGINT, true);
@@ -400,7 +454,7 @@ public abstract class AbstractTestHiveClient
     public void testGetPartitionSplitsBatch()
             throws Exception
     {
-        ConnectorTableHandle tableHandle = getTableHandle(table);
+        ConnectorTableHandle tableHandle = getTableHandle(tablePartitionFormat);
         ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.<ConnectorColumnHandle>all());
         ConnectorSplitSource splitSource = splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions());
 
@@ -455,7 +509,7 @@ public abstract class AbstractTestHiveClient
         ConnectorTableHandle tableHandle = getTableHandle(tableOfflinePartition);
         assertNotNull(tableHandle);
 
-        ConnectorColumnHandle dsColumn = metadata.getColumnHandle(tableHandle, "ds");
+        ConnectorColumnHandle dsColumn = metadata.getColumnHandles(tableHandle).get("ds");
         assertNotNull(dsColumn);
 
         Domain domain = Domain.singleValue(utf8Slice("2012-12-30"));
@@ -488,9 +542,9 @@ public abstract class AbstractTestHiveClient
 
         assertTableIsBucketed(tableHandle);
 
-        String testString = "sequencefile test";
-        Long testInt = 413L;
-        Long testSmallint = 412L;
+        String testString = "test";
+        Long testInt = 13L;
+        Long testSmallint = 12L;
 
         // Reverse the order of bindings as compared to bucketing order
         ImmutableMap<ConnectorColumnHandle, Comparable<?>> bindings = ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
@@ -503,12 +557,14 @@ public abstract class AbstractTestHiveClient
         List<ConnectorSplit> splits = getAllSplits(splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions()));
         assertEquals(splits.size(), 1);
 
-        boolean rowFound = false;
-        try (RecordCursor cursor = recordSetProvider.getRecordSet(splits.get(0), columnHandles).cursor()) {
-            while (cursor.advanceNextPosition()) {
-                if (testString.equals(cursor.getSlice(columnIndex.get("t_string")).toStringUtf8()) &&
-                        testInt == cursor.getLong(columnIndex.get("t_int")) &&
-                        testSmallint == cursor.getLong(columnIndex.get("t_smallint"))) {
+        try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(splits.get(0), columnHandles)) {
+            MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+
+            boolean rowFound = false;
+            for (MaterializedRow row : result) {
+                if (testString.equals(row.getField(columnIndex.get("t_string"))) &&
+                        testInt.equals(row.getField(columnIndex.get("t_int"))) &&
+                        testSmallint.equals(row.getField(columnIndex.get("t_smallint")))) {
                     rowFound = true;
                 }
             }
@@ -516,6 +572,7 @@ public abstract class AbstractTestHiveClient
         }
     }
 
+    @SuppressWarnings("ConstantConditions")
     @Test
     public void testBucketedTableBigintBoolean()
             throws Exception
@@ -526,10 +583,8 @@ public abstract class AbstractTestHiveClient
 
         assertTableIsBucketed(tableHandle);
 
-        String testString = "textfile test";
-        // This needs to match one of the rows where t_string is not empty or null, and where t_bigint is not null
-        // (i.e. (testBigint - 604) % 19 > 1 and (testBigint - 604) % 13 != 0)
-        Long testBigint = 608L;
+        String testString = "test";
+        Long testBigint = 89L;
         Boolean testBoolean = true;
 
         ImmutableMap<ConnectorColumnHandle, Comparable<?>> bindings = ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
@@ -542,12 +597,14 @@ public abstract class AbstractTestHiveClient
         List<ConnectorSplit> splits = getAllSplits(splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions()));
         assertEquals(splits.size(), 1);
 
-        boolean rowFound = false;
-        try (RecordCursor cursor = recordSetProvider.getRecordSet(splits.get(0), columnHandles).cursor()) {
-            while (cursor.advanceNextPosition()) {
-                if (testString.equals(cursor.getSlice(columnIndex.get("t_string")).toStringUtf8()) &&
-                        testBigint == cursor.getLong(columnIndex.get("t_bigint")) &&
-                        testBoolean == cursor.getBoolean(columnIndex.get("t_boolean"))) {
+        try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(splits.get(0), columnHandles)) {
+            MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+
+            boolean rowFound = false;
+            for (MaterializedRow row : result) {
+                if (testString.equals(row.getField(columnIndex.get("t_string"))) &&
+                        testBigint.equals(row.getField(columnIndex.get("t_bigint"))) &&
+                        testBoolean.equals(row.getField(columnIndex.get("t_boolean")))) {
                     rowFound = true;
                     break;
                 }
@@ -567,8 +624,8 @@ public abstract class AbstractTestHiveClient
         assertTableIsBucketed(tableHandle);
 
         ImmutableMap<ConnectorColumnHandle, Comparable<?>> bindings = ImmutableMap.<ConnectorColumnHandle, Comparable<?>>builder()
-                .put(columnHandles.get(columnIndex.get("t_float")), 406.1000061035156)
-                .put(columnHandles.get(columnIndex.get("t_double")), 407.2)
+                .put(columnHandles.get(columnIndex.get("t_float")), 87.1)
+                .put(columnHandles.get(columnIndex.get("t_double")), 88.2)
                 .build();
 
         // floats and doubles are not supported, so we should see all splits
@@ -578,13 +635,12 @@ public abstract class AbstractTestHiveClient
 
         int count = 0;
         for (ConnectorSplit split : splits) {
-            try (RecordCursor cursor = recordSetProvider.getRecordSet(split, columnHandles).cursor()) {
-                while (cursor.advanceNextPosition()) {
-                    count++;
-                }
+            try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
+                MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+                count += result.getRowCount();
             }
         }
-        assertEquals(count, 300);
+        assertEquals(count, 100);
     }
 
     private void assertTableIsBucketed(ConnectorTableHandle tableHandle)
@@ -606,7 +662,7 @@ public abstract class AbstractTestHiveClient
     public void testGetRecords()
             throws Exception
     {
-        ConnectorTableHandle tableHandle = getTableHandle(table);
+        ConnectorTableHandle tableHandle = getTableHandle(tablePartitionFormat);
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
         List<ConnectorColumnHandle> columnHandles = ImmutableList.copyOf(metadata.getColumnHandles(tableHandle).values());
         Map<String, Integer> columnIndex = indexColumns(columnHandles);
@@ -620,20 +676,18 @@ public abstract class AbstractTestHiveClient
             List<HivePartitionKey> partitionKeys = hiveSplit.getPartitionKeys();
             String ds = partitionKeys.get(0).getValue();
             String fileType = partitionKeys.get(1).getValue();
-            long dummy = Long.parseLong(partitionKeys.get(2).getValue());
-
-            long baseValue = getBaseValueForFileType(fileType);
-            assertEquals(dummy * 100, baseValue);
+            long dummyPartition = Long.parseLong(partitionKeys.get(2).getValue());
 
             long rowNumber = 0;
             long completedBytes = 0;
-            try (RecordCursor cursor = recordSetProvider.getRecordSet(hiveSplit, columnHandles).cursor()) {
-                assertRecordCursorType(cursor, fileType);
-                assertEquals(cursor.getTotalBytes(), hiveSplit.getLength());
+            try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(hiveSplit, columnHandles)) {
+                MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
 
-                while (cursor.advanceNextPosition()) {
+                assertPageSourceType(pageSource, fileType);
+
+                for (MaterializedRow row : result) {
                     try {
-                        assertReadFields(cursor, tableMetadata.getColumns());
+                        assertValueTypes(row, tableMetadata.getColumns());
                     }
                     catch (RuntimeException e) {
                         throw new RuntimeException("row " + rowNumber, e);
@@ -642,87 +696,49 @@ public abstract class AbstractTestHiveClient
                     rowNumber++;
 
                     if (rowNumber % 19 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_string")));
+                        assertNull(row.getField(columnIndex.get("t_string")));
                     }
                     else if (rowNumber % 19 == 1) {
-                        assertEquals(cursor.getSlice(columnIndex.get("t_string")).toStringUtf8(), "");
+                        assertEquals(row.getField(columnIndex.get("t_string")), "");
                     }
                     else {
-                        assertEquals(cursor.getSlice(columnIndex.get("t_string")).toStringUtf8(), (fileType + " test"));
+                        assertEquals(row.getField(columnIndex.get("t_string")), "test");
                     }
 
-                    assertEquals(cursor.getLong(columnIndex.get("t_tinyint")), (long) ((byte) (baseValue + 1 + rowNumber)));
-                    assertEquals(cursor.getLong(columnIndex.get("t_smallint")), baseValue + 2 + rowNumber);
-                    assertEquals(cursor.getLong(columnIndex.get("t_int")), baseValue + 3 + rowNumber);
+                    assertEquals(row.getField(columnIndex.get("t_tinyint")), 1 + rowNumber);
+                    assertEquals(row.getField(columnIndex.get("t_smallint")), 2 + rowNumber);
+                    assertEquals(row.getField(columnIndex.get("t_int")), 3 + rowNumber);
 
                     if (rowNumber % 13 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_bigint")));
+                        assertNull(row.getField(columnIndex.get("t_bigint")));
                     }
                     else {
-                        assertEquals(cursor.getLong(columnIndex.get("t_bigint")), baseValue + 4 + rowNumber);
+                        assertEquals(row.getField(columnIndex.get("t_bigint")), 4 + rowNumber);
                     }
 
-                    assertEquals(cursor.getDouble(columnIndex.get("t_float")), baseValue + 5.1 + rowNumber, 0.001);
-                    assertEquals(cursor.getDouble(columnIndex.get("t_double")), baseValue + 6.2 + rowNumber);
+                    assertEquals((Double) row.getField(columnIndex.get("t_float")), 5.1 + rowNumber, 0.001);
+                    assertEquals(row.getField(columnIndex.get("t_double")), 6.2 + rowNumber);
 
                     if (rowNumber % 3 == 2) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_boolean")));
+                        assertNull(row.getField(columnIndex.get("t_boolean")));
                     }
                     else {
-                        assertEquals(cursor.getBoolean(columnIndex.get("t_boolean")), rowNumber % 3 != 0);
+                        assertEquals(row.getField(columnIndex.get("t_boolean")), rowNumber % 3 != 0);
                     }
 
-                    if (rowNumber % 17 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_timestamp")));
-                    }
-                    else {
-                        long millis = new DateTime(2011, 5, 6, 7, 8, 9, 123, timeZone).getMillis();
-                        assertEquals(cursor.getLong(columnIndex.get("t_timestamp")), millis, (fileType + " test"));
-                    }
+                    assertEquals(row.getField(columnIndex.get("ds")), ds);
+                    assertEquals(row.getField(columnIndex.get("file_format")), fileType);
+                    assertEquals(row.getField(columnIndex.get("dummy")), dummyPartition);
 
-                    if (rowNumber % 23 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_binary")));
-                    }
-                    else {
-                        assertEquals(cursor.getSlice(columnIndex.get("t_binary")).toStringUtf8(), (fileType + " test"));
-                    }
-
-                    if (rowNumber % 29 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_map")));
-                    }
-                    else {
-                        String expectedJson = "{\"format\":\"" + fileType + "\"}";
-                        assertEquals(cursor.getSlice(columnIndex.get("t_map")).toStringUtf8(), expectedJson);
-                    }
-
-                    if (rowNumber % 27 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_array_string")));
-                    }
-                    else {
-                        String expectedJson = "[\"" + fileType + "\",\"test\",\"data\"]";
-                        assertEquals(cursor.getSlice(columnIndex.get("t_array_string")).toStringUtf8(), expectedJson);
-                    }
-
-                    if (rowNumber % 31 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_complex")));
-                    }
-                    else {
-                        String expectedJson = "{\"1\":[{\"s_string\":\"" + fileType + "-a\",\"s_double\":0.1},{\"s_string\":\"" + fileType + "-b\",\"s_double\":0.2}]}";
-                        assertEquals(cursor.getSlice(columnIndex.get("t_complex")).toStringUtf8(), expectedJson);
-                    }
-
-                    assertEquals(cursor.getSlice(columnIndex.get("ds")).toStringUtf8(), ds);
-                    assertEquals(cursor.getSlice(columnIndex.get("file_format")).toStringUtf8(), fileType);
-                    assertEquals(cursor.getLong(columnIndex.get("dummy")), dummy);
-
-                    long newCompletedBytes = cursor.getCompletedBytes();
+                    long newCompletedBytes = pageSource.getCompletedBytes();
                     assertTrue(newCompletedBytes >= completedBytes);
                     assertTrue(newCompletedBytes <= hiveSplit.getLength());
                     completedBytes = newCompletedBytes;
                 }
+
+                assertTrue(completedBytes <= hiveSplit.getLength());
+                assertEquals(rowNumber, 100);
             }
-            assertTrue(completedBytes <= hiveSplit.getLength());
-            assertEquals(rowNumber, 100);
         }
     }
 
@@ -730,7 +746,7 @@ public abstract class AbstractTestHiveClient
     public void testGetPartialRecords()
             throws Exception
     {
-        ConnectorTableHandle tableHandle = getTableHandle(table);
+        ConnectorTableHandle tableHandle = getTableHandle(tablePartitionFormat);
         List<ConnectorColumnHandle> columnHandles = ImmutableList.copyOf(metadata.getColumnHandles(tableHandle).values());
         Map<String, Integer> columnIndex = indexColumns(columnHandles);
 
@@ -743,20 +759,19 @@ public abstract class AbstractTestHiveClient
             List<HivePartitionKey> partitionKeys = hiveSplit.getPartitionKeys();
             String ds = partitionKeys.get(0).getValue();
             String fileType = partitionKeys.get(1).getValue();
-            long dummy = Long.parseLong(partitionKeys.get(2).getValue());
-
-            long baseValue = getBaseValueForFileType(fileType);
+            long dummyPartition = Long.parseLong(partitionKeys.get(2).getValue());
 
             long rowNumber = 0;
-            try (RecordCursor cursor = recordSetProvider.getRecordSet(hiveSplit, columnHandles).cursor()) {
-                assertRecordCursorType(cursor, fileType);
-                while (cursor.advanceNextPosition()) {
+            try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(hiveSplit, columnHandles)) {
+                assertPageSourceType(pageSource, fileType);
+                MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+                for (MaterializedRow row : result) {
                     rowNumber++;
 
-                    assertEquals(cursor.getDouble(columnIndex.get("t_double")), baseValue + 6.2 + rowNumber);
-                    assertEquals(cursor.getSlice(columnIndex.get("ds")).toStringUtf8(), ds);
-                    assertEquals(cursor.getSlice(columnIndex.get("file_format")).toStringUtf8(), fileType);
-                    assertEquals(cursor.getLong(columnIndex.get("dummy")), dummy);
+                    assertEquals(row.getField(columnIndex.get("t_double")),  6.2 + rowNumber);
+                    assertEquals(row.getField(columnIndex.get("ds")), ds);
+                    assertEquals(row.getField(columnIndex.get("file_format")), fileType);
+                    assertEquals(row.getField(columnIndex.get("dummy")), dummyPartition);
                 }
             }
             assertEquals(rowNumber, 100);
@@ -781,24 +796,25 @@ public abstract class AbstractTestHiveClient
             assertEquals(hiveSplit.getPartitionKeys(), ImmutableList.of());
 
             long rowNumber = 0;
-            try (RecordCursor cursor = recordSetProvider.getRecordSet(split, columnHandles).cursor()) {
-                assertRecordCursorType(cursor, "textfile");
-                assertEquals(cursor.getTotalBytes(), hiveSplit.getLength());
+            try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
+                assertPageSourceType(pageSource, "textfile");
+                MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
 
-                while (cursor.advanceNextPosition()) {
+                assertEquals(pageSource.getTotalBytes(), hiveSplit.getLength());
+                for (MaterializedRow row : result) {
                     rowNumber++;
 
                     if (rowNumber % 19 == 0) {
-                        assertTrue(cursor.isNull(columnIndex.get("t_string")));
+                        assertNull(row.getField(columnIndex.get("t_string")));
                     }
                     else if (rowNumber % 19 == 1) {
-                        assertEquals(cursor.getSlice(columnIndex.get("t_string")).toStringUtf8(), "");
+                        assertEquals(row.getField(columnIndex.get("t_string")), "");
                     }
                     else {
-                        assertEquals(cursor.getSlice(columnIndex.get("t_string")).toStringUtf8(), "unpartitioned");
+                        assertEquals(row.getField(columnIndex.get("t_string")), "unpartitioned");
                     }
 
-                    assertEquals(cursor.getLong(columnIndex.get("t_tinyint")), 1 + rowNumber);
+                    assertEquals(row.getField(columnIndex.get("t_tinyint")), 1 + rowNumber);
                 }
             }
             assertEquals(rowNumber, 100);
@@ -812,8 +828,65 @@ public abstract class AbstractTestHiveClient
         ConnectorTableHandle table = getTableHandle(tableUnpartitioned);
         ConnectorPartitionResult partitionResult = splitManager.getPartitions(table, TupleDomain.<ConnectorColumnHandle>all());
         ConnectorSplit split = Iterables.getFirst(getAllSplits(splitManager.getPartitionSplits(table, partitionResult.getPartitions())), null);
-        RecordSet recordSet = recordSetProvider.getRecordSet(split, ImmutableList.of(invalidColumnHandle));
-        recordSet.cursor();
+        pageSourceProvider.createPageSource(split, ImmutableList.of(invalidColumnHandle));
+    }
+
+    @Test(expectedExceptions = PrestoException.class, expectedExceptionsMessageRegExp = "Table '.*\\.presto_test_partition_schema_change' partition 'ds=2012-12-29' column 't_data' type 'string' does not match table column type 'bigint'")
+    public void testPartitionSchemaMismatch()
+            throws Exception
+    {
+        ConnectorTableHandle table = getTableHandle(tablePartitionSchemaChange);
+        ConnectorPartitionResult partitionResult = splitManager.getPartitions(table, TupleDomain.<ConnectorColumnHandle>all());
+        getAllSplits(splitManager.getPartitionSplits(table, partitionResult.getPartitions()));
+    }
+
+    @Test
+    public void testTypesTextFile()
+            throws Exception
+    {
+        assertGetRecords("presto_test_types_textfile", "textfile");
+    }
+
+    @Test
+    public void testTypesSequenceFile()
+            throws Exception
+    {
+        assertGetRecords("presto_test_types_sequencefile", "sequencefile");
+    }
+
+    @Test
+    public void testTypesRcText()
+            throws Exception
+    {
+        assertGetRecords("presto_test_types_rctext", "rctext");
+    }
+
+    @Test
+    public void testTypesRcBinary()
+            throws Exception
+    {
+        assertGetRecords("presto_test_types_rcbinary", "rcbinary");
+    }
+
+    @Test
+    public void testTypesOrc()
+            throws Exception
+    {
+        assertGetRecordsOptional("presto_test_types_orc", "orc");
+    }
+
+    @Test
+    public void testTypesParquet()
+            throws Exception
+    {
+        assertGetRecordsOptional("presto_test_types_parquet", "parquet");
+    }
+
+    @Test
+    public void testTypesDwrf()
+            throws Exception
+    {
+        assertGetRecordsOptional("presto_test_types_dwrf", "dwrf");
     }
 
     @Test
@@ -950,7 +1023,7 @@ public abstract class AbstractTestHiveClient
     }
 
     private void doCreateSampledTable()
-            throws InterruptedException
+            throws Exception
     {
         // begin creating the table
         List<ColumnMetadata> columns = ImmutableList.<ColumnMetadata>builder()
@@ -1003,27 +1076,29 @@ public abstract class AbstractTestHiveClient
         ConnectorSplitSource splitSource = splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions());
         ConnectorSplit split = getOnlyElement(getAllSplits(splitSource));
 
-        try (RecordCursor cursor = recordSetProvider.getRecordSet(split, columnHandles).cursor()) {
-            assertRecordCursorType(cursor, "rcfile-binary");
+        try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
+            assertPageSourceType(pageSource, "rcfile-binary");
+            MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+            assertEquals(result.getRowCount(), 3);
 
-            assertTrue(cursor.advanceNextPosition());
-            assertEquals(cursor.getLong(0), 2);
-            assertEquals(cursor.getLong(1), 8);
+            MaterializedRow row;
 
-            assertTrue(cursor.advanceNextPosition());
-            assertEquals(cursor.getLong(0), 3);
-            assertEquals(cursor.getLong(1), 5);
+            row = result.getMaterializedRows().get(0);
+            assertEquals(row.getField(0), 2L);
+            assertEquals(row.getField(1), 8L);
 
-            assertTrue(cursor.advanceNextPosition());
-            assertEquals(cursor.getLong(0), 4);
-            assertEquals(cursor.getLong(1), 7);
+            row = result.getMaterializedRows().get(1);
+            assertEquals(row.getField(0), 3L);
+            assertEquals(row.getField(1), 5L);
 
-            assertFalse(cursor.advanceNextPosition());
+            row = result.getMaterializedRows().get(2);
+            assertEquals(row.getField(0), 4L);
+            assertEquals(row.getField(1), 7L);
         }
     }
 
     private void doCreateTable()
-            throws InterruptedException
+            throws Exception
     {
         // begin creating the table
         List<ColumnMetadata> columns = ImmutableList.<ColumnMetadata>builder()
@@ -1091,31 +1166,231 @@ public abstract class AbstractTestHiveClient
         ConnectorSplitSource splitSource = splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions());
         ConnectorSplit split = getOnlyElement(getAllSplits(splitSource));
 
-        try (RecordCursor cursor = recordSetProvider.getRecordSet(split, columnHandles).cursor()) {
-            assertRecordCursorType(cursor, "rcfile-binary");
+        try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
+            assertPageSourceType(pageSource, "rcfile-binary");
+            MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+            assertEquals(result.getRowCount(), 3);
 
-            assertTrue(cursor.advanceNextPosition());
-            assertEquals(cursor.getLong(0), 1);
-            assertEquals(cursor.getSlice(1).toStringUtf8(), "hello");
-            assertEquals(cursor.getLong(2), 123);
-            assertEquals(cursor.getDouble(3), 43.5);
-            assertEquals(cursor.getBoolean(4), true);
+            MaterializedRow row;
 
-            assertTrue(cursor.advanceNextPosition());
-            assertEquals(cursor.getLong(0), 2);
-            assertTrue(cursor.isNull(1));
-            assertTrue(cursor.isNull(2));
-            assertTrue(cursor.isNull(3));
-            assertTrue(cursor.isNull(4));
+            row = result.getMaterializedRows().get(0);
+            assertEquals(row.getField(0), 1L);
+            assertEquals(row.getField(1), "hello");
+            assertEquals(row.getField(2), 123L);
+            assertEquals(row.getField(3), 43.5);
+            assertEquals(row.getField(4), true);
 
-            assertTrue(cursor.advanceNextPosition());
-            assertEquals(cursor.getLong(0), 3);
-            assertEquals(cursor.getSlice(1).toStringUtf8(), "bye");
-            assertEquals(cursor.getLong(2), 456);
-            assertEquals(cursor.getDouble(3), 98.1);
-            assertEquals(cursor.getBoolean(4), false);
+            row = result.getMaterializedRows().get(1);
+            assertEquals(row.getField(0), 2L);
+            assertNull(row.getField(1));
+            assertNull(row.getField(2));
+            assertNull(row.getField(3));
+            assertNull(row.getField(4));
 
-            assertFalse(cursor.advanceNextPosition());
+            row = result.getMaterializedRows().get(2);
+            assertEquals(row.getField(0), 3L);
+            assertEquals(row.getField(1), "bye");
+            assertEquals(row.getField(2), 456L);
+            assertEquals(row.getField(3), 98.1);
+            assertEquals(row.getField(4), false);
+        }
+    }
+
+    protected void assertGetRecordsOptional(String tableName, String fileType)
+            throws Exception
+    {
+        if (metadata.getTableHandle(SESSION, new SchemaTableName(database, tableName)) != null) {
+            assertGetRecords(tableName, fileType);
+        }
+    }
+
+    protected void assertGetRecords(String tableName, String fileType)
+            throws Exception
+    {
+        ConnectorTableHandle tableHandle = getTableHandle(new SchemaTableName(database, tableName));
+        ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
+        List<ConnectorColumnHandle> columnHandles = ImmutableList.copyOf(metadata.getColumnHandles(tableHandle).values());
+        Map<String, Integer> columnIndex = indexColumns(columnHandles);
+
+        ConnectorPartitionResult partitionResult = splitManager.getPartitions(tableHandle, TupleDomain.<ConnectorColumnHandle>all());
+        List<ConnectorSplit> splits = getAllSplits(splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions()));
+        assertEquals(splits.size(), 1);
+        HiveSplit hiveSplit = checkType(getOnlyElement(splits), HiveSplit.class, "split");
+
+        long rowNumber = 0;
+        long completedBytes = 0;
+        try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(hiveSplit, columnHandles)) {
+            MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+
+            assertPageSourceType(pageSource, fileType);
+
+            for (MaterializedRow row : result) {
+                try {
+                    assertValueTypes(row, tableMetadata.getColumns());
+                }
+                catch (RuntimeException e) {
+                    throw new RuntimeException("row " + rowNumber, e);
+                }
+
+                rowNumber++;
+                Integer index;
+
+                // STRING
+                index = columnIndex.get("t_string");
+                if ((rowNumber % 19) == 0) {
+                    assertNull(row.getField(index));
+                }
+                else {
+                    assertEquals(row.getField(index), ((rowNumber % 19) == 1) ? "" : "test");
+                }
+
+                // NUMBERS
+                assertEquals(row.getField(columnIndex.get("t_tinyint")), 1 + rowNumber);
+                assertEquals(row.getField(columnIndex.get("t_smallint")), 2 + rowNumber);
+                assertEquals(row.getField(columnIndex.get("t_int")), 3 + rowNumber);
+
+                index = columnIndex.get("t_bigint");
+                if ((rowNumber % 13) == 0) {
+                    assertNull(row.getField(index));
+                }
+                else {
+                    assertEquals(row.getField(index), 4 + rowNumber);
+                }
+
+                assertEquals((Double) row.getField(columnIndex.get("t_float")), 5.1 + rowNumber, 0.001);
+                assertEquals(row.getField(columnIndex.get("t_double")), 6.2 + rowNumber);
+
+                // BOOLEAN
+                index = columnIndex.get("t_boolean");
+                if ((rowNumber % 3) == 2) {
+                    assertNull(row.getField(index));
+                }
+                else {
+                    assertEquals(row.getField(index), (rowNumber % 3) != 0);
+                }
+
+                // TIMESTAMP
+                index = columnIndex.get("t_timestamp");
+                if (index != null) {
+                    if ((rowNumber % 17) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        SqlTimestamp expected = new SqlTimestamp(new DateTime(2011, 5, 6, 7, 8, 9, 123, timeZone).getMillis(), UTC_KEY);
+                        assertEquals(row.getField(index), expected);
+                    }
+                }
+
+                // BINARY
+                index = columnIndex.get("t_binary");
+                if (index != null) {
+                    if ((rowNumber % 23) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        assertEquals(row.getField(index), new SqlVarbinary("test binary".getBytes(UTF_8)));
+                    }
+                }
+
+                // DATE
+                index = columnIndex.get("t_date");
+                if (index != null) {
+                    if ((rowNumber % 37) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        SqlDate expected = new SqlDate(new DateTime(2013, 8, 9, 0, 0, 0, DateTimeZone.UTC).getMillis(), UTC_KEY);
+                        assertEquals(row.getField(index), expected);
+                    }
+                }
+
+                /* TODO: enable these tests when the types are supported
+                // VARCHAR(50)
+                index = columnIndex.get("t_varchar");
+                if (index != null) {
+                    if ((rowNumber % 39) == 0) {
+                        assertTrue(cursor.isNull(index));
+                    }
+                    else {
+                        String stringValue = cursor.getSlice(index).toStringUtf8();
+                        assertEquals(stringValue, ((rowNumber % 39) == 1) ? "" : "test varchar");
+                    }
+                }
+
+                // CHAR(25)
+                index = columnIndex.get("t_char");
+                if (index != null) {
+                    if ((rowNumber % 41) == 0) {
+                        assertTrue(cursor.isNull(index));
+                    }
+                    else {
+                        String stringValue = cursor.getSlice(index).toStringUtf8();
+                        assertEquals(stringValue, ((rowNumber % 41) == 1) ? "" : "test char");
+                    }
+                }
+                */
+
+                // MAP<STRING, STRING>
+                index = columnIndex.get("t_map");
+                if (index != null) {
+                    if ((rowNumber % 27) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        assertEquals(row.getField(index), "{\"test key\":\"test value\"}");
+                    }
+                }
+
+                // ARRAY<STRING>
+                index = columnIndex.get("t_array_string");
+                if (index != null) {
+                    if ((rowNumber % 29) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        assertEquals(row.getField(index), "[\"abc\",\"xyz\",\"data\"]");
+                    }
+                }
+
+                // ARRAY<STRUCT<s_string: STRING, s_double:DOUBLE>>
+                index = columnIndex.get("t_array_struct");
+                if (index != null) {
+                    if ((rowNumber % 31) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        String expectedJson = "[" +
+                                "{\"s_string\":\"test abc\",\"s_double\":0.1}," +
+                                "{\"s_string\":\"test xyz\",\"s_double\":0.2}]";
+                        assertEquals(row.getField(index), expectedJson);
+                    }
+                }
+
+                // MAP<INT, ARRAY<STRUCT<s_string: STRING, s_double:DOUBLE>>>
+                index = columnIndex.get("t_complex");
+                if (index != null) {
+                    if ((rowNumber % 33) == 0) {
+                        assertNull(row.getField(index));
+                    }
+                    else {
+                        String expectedJson = "{\"1\":[" +
+                                "{\"s_string\":\"test abc\",\"s_double\":0.1}," +
+                                "{\"s_string\":\"test xyz\",\"s_double\":0.2}]}";
+                        assertEquals(row.getField(index), expectedJson);
+                    }
+                }
+
+                // NEW COLUMN
+                assertNull(row.getField(columnIndex.get("new_column")));
+
+                long newCompletedBytes = pageSource.getCompletedBytes();
+                assertTrue(newCompletedBytes >= completedBytes);
+                assertTrue(newCompletedBytes <= hiveSplit.getLength());
+                completedBytes = newCompletedBytes;
+            }
+
+            assertTrue(completedBytes <= hiveSplit.getLength());
+            assertEquals(rowNumber, 100);
         }
     }
 
@@ -1158,59 +1433,66 @@ public abstract class AbstractTestHiveClient
         return splits.build();
     }
 
-    private static long getBaseValueForFileType(String fileType)
+    private static void assertRecordCursorType(RecordCursor cursor, String fileType)
+    {
+        assertInstanceOf(cursor, recordCursorType(fileType), fileType);
+    }
+
+    private static Class<? extends HiveRecordCursor> recordCursorType(String fileType)
     {
         switch (fileType) {
             case "rcfile-text":
-                return 0;
+            case "rctext":
+                return ColumnarTextHiveRecordCursor.class;
             case "rcfile-binary":
-                return 200;
-            case "sequencefile":
-                return 400;
-            case "textfile":
-                return 600;
-            default:
-                throw new IllegalArgumentException("Unexpected fileType key " + fileType);
+            case "rcbinary":
+                return ColumnarBinaryHiveRecordCursor.class;
+            case "orc":
+                return OrcHiveRecordCursor.class;
+            case "parquet":
+                return ParquetHiveRecordCursor.class;
+            case "dwrf":
+                return DwrfHiveRecordCursor.class;
         }
+        return GenericHiveRecordCursor.class;
     }
 
-    private static void assertRecordCursorType(RecordCursor cursor, String fileType)
+    private static void assertPageSourceType(ConnectorPageSource pageSource, String fileType)
     {
-        if (fileType.equals("rcfile-text")) {
-            assertInstanceOf(cursor, ColumnarTextHiveRecordCursor.class, fileType);
-        }
-        else if (fileType.equals("rcfile-binary")) {
-            assertInstanceOf(cursor, ColumnarBinaryHiveRecordCursor.class, fileType);
+        if (pageSource instanceof RecordPageSource) {
+            assertRecordCursorType(((RecordPageSource) pageSource).getCursor(), fileType);
         }
         else {
-            assertInstanceOf(cursor, GenericHiveRecordCursor.class, fileType);
+            fail("Unexpected pageSource operator type for file type " + fileType);
         }
     }
 
-    private static void assertReadFields(RecordCursor cursor, List<ColumnMetadata> schema)
+    private static void assertValueTypes(MaterializedRow row, List<ColumnMetadata> schema)
     {
         for (int columnIndex = 0; columnIndex < schema.size(); columnIndex++) {
             ColumnMetadata column = schema.get(columnIndex);
-            if (!cursor.isNull(columnIndex)) {
+            Object value = row.getField(columnIndex);
+            if (value != null) {
                 if (BOOLEAN.equals(column.getType())) {
-                    cursor.getBoolean(columnIndex);
+                    assertInstanceOf(value, Boolean.class);
                 }
                 else if (BIGINT.equals(column.getType())) {
-                    cursor.getLong(columnIndex);
+                    assertInstanceOf(value, Long.class);
                 }
                 else if (DOUBLE.equals(column.getType())) {
-                    cursor.getDouble(columnIndex);
+                    assertInstanceOf(value, Double.class);
                 }
-                else if (VARCHAR.equals(column.getType()) || VARBINARY.equals(column.getType())) {
-                    try {
-                        cursor.getSlice(columnIndex);
-                    }
-                    catch (RuntimeException e) {
-                        throw new RuntimeException("column " + column, e);
-                    }
+                else if (VARCHAR.equals(column.getType())) {
+                    assertInstanceOf(value, String.class);
+                }
+                else if (VARBINARY.equals(column.getType())) {
+                    assertInstanceOf(value, SqlVarbinary.class);
                 }
                 else if (TIMESTAMP.equals(column.getType())) {
-                    cursor.getLong(columnIndex);
+                    assertInstanceOf(value, SqlTimestamp.class);
+                }
+                else if (DATE.equals(column.getType())) {
+                    assertInstanceOf(value, SqlDate.class);
                 }
                 else {
                     fail("Unknown primitive type " + columnIndex);

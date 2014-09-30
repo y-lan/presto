@@ -13,10 +13,13 @@
  */
 package com.facebook.presto.tests;
 
+import com.facebook.presto.Session;
+import com.facebook.presto.connector.system.SystemSplitManager;
+import com.facebook.presto.connector.system.SystemTablesMetadata;
 import com.facebook.presto.index.IndexManager;
+import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.MetadataManager;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
@@ -62,7 +65,7 @@ public abstract class AbstractTestQueryFramework
         }
     }
 
-    protected ConnectorSession getSession()
+    protected Session getSession()
     {
         return queryRunner.getDefaultSession();
     }
@@ -107,7 +110,7 @@ public abstract class AbstractTestQueryFramework
         assertQuery(sql, "SELECT true");
     }
 
-    public void assertApproximateQuery(ConnectorSession session, @Language("SQL") String actual, @Language("SQL") String expected)
+    public void assertApproximateQuery(Session session, @Language("SQL") String actual, @Language("SQL") String expected)
             throws Exception
     {
         QueryAssertions.assertApproximateQuery(queryRunner,
@@ -149,9 +152,9 @@ public abstract class AbstractTestQueryFramework
 
     private QueryExplainer getQueryExplainer()
     {
-        Metadata metadata = new MetadataManager(new FeaturesConfig().setExperimentalSyntaxEnabled(true), new TypeRegistry());
+        Metadata metadata = new MetadataManager(new FeaturesConfig().setExperimentalSyntaxEnabled(true), new TypeRegistry(), new SystemTablesMetadata());
         FeaturesConfig featuresConfig = new FeaturesConfig().setExperimentalSyntaxEnabled(true);
-        List<PlanOptimizer> optimizers = new PlanOptimizersFactory(metadata, sqlParser, new SplitManager(), new IndexManager(), featuresConfig).get();
-        return new QueryExplainer(queryRunner.getDefaultSession(), optimizers, metadata, sqlParser, featuresConfig.isExperimentalSyntaxEnabled());
+        List<PlanOptimizer> optimizers = new PlanOptimizersFactory(metadata, sqlParser, new SplitManager(new SystemSplitManager(new InMemoryNodeManager())), new IndexManager(), featuresConfig).get();
+        return new QueryExplainer(queryRunner.getDefaultSession(), optimizers, metadata, sqlParser, featuresConfig.isExperimentalSyntaxEnabled(), featuresConfig.isDistributedIndexJoinsEnabled(), featuresConfig.isDistributedJoinsEnabled());
     }
 }

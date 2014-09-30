@@ -17,6 +17,7 @@ import com.facebook.presto.hive.shaded.org.apache.commons.codec.binary.Base64;
 import com.facebook.presto.hive.util.SerDeUtils;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import io.airlift.slice.Slice;
@@ -30,6 +31,8 @@ import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.mapred.RecordReader;
 import org.joda.time.DateTimeZone;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -46,6 +49,7 @@ import static com.facebook.presto.hive.NumberParser.parseDouble;
 import static com.facebook.presto.hive.NumberParser.parseLong;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
@@ -56,10 +60,14 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.Maps.uniqueIndex;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category.STRUCT;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category.LIST;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category.MAP;
 
 class ColumnarTextHiveRecordCursor<K>
         extends HiveRecordCursor
 {
+    private static final DateTimeFormatter DATE_PARSER = ISODateTimeFormat.date().withZoneUTC();
     private final RecordReader<K, BytesRefArrayWritable> recordReader;
     private final K key;
     private final BytesRefArrayWritable value;
@@ -96,7 +104,8 @@ class ColumnarTextHiveRecordCursor<K>
             List<HivePartitionKey> partitionKeys,
             List<HiveColumnHandle> columns,
             DateTimeZone hiveStorageTimeZone,
-            DateTimeZone sessionTimeZone)
+            DateTimeZone sessionTimeZone,
+            TypeManager typeManager)
     {
         checkNotNull(recordReader, "recordReader is null");
         checkArgument(totalBytes >= 0, "totalBytes is negative");
@@ -139,7 +148,7 @@ class ColumnarTextHiveRecordCursor<K>
             HiveColumnHandle column = columns.get(i);
 
             names[i] = column.getName();
-            types[i] = column.getType();
+            types[i] = typeManager.getType(column.getTypeName());
             hiveTypes[i] = column.getHiveType();
 
             if (!column.isPartitionKey()) {
@@ -187,6 +196,9 @@ class ColumnarTextHiveRecordCursor<K>
                 }
                 else if (VARCHAR.equals(type)) {
                     slices[columnIndex] = Slices.wrappedBuffer(bytes);
+                }
+                else if (DATE.equals(type)) {
+                    longs[columnIndex] = ISODateTimeFormat.date().withZone(DateTimeZone.UTC).parseMillis(partitionKey.getValue());
                 }
                 else {
                     throw new UnsupportedOperationException("Unsupported column type: " + type);
@@ -315,9 +327,9 @@ class ColumnarTextHiveRecordCursor<K>
     {
         checkState(!closed, "Cursor is closed");
 
-        if (!types[fieldId].equals(BIGINT) && !types[fieldId].equals(TIMESTAMP)) {
+        if (!types[fieldId].equals(BIGINT) && !types[fieldId].equals(DATE) && !types[fieldId].equals(TIMESTAMP)) {
             // we don't use Preconditions.checkArgument because it requires boxing fieldId, which affects inner loop performance
-            throw new IllegalArgumentException(String.format("Expected field to be %s or %s , actual %s (field %s)", BIGINT, TIMESTAMP, types[fieldId], fieldId));
+            throw new IllegalArgumentException(String.format("Expected field to be %s, %s or %s , actual %s (field %s)", BIGINT, DATE, TIMESTAMP, types[fieldId], fieldId));
         }
 
         if (!loaded[fieldId]) {
@@ -362,7 +374,12 @@ class ColumnarTextHiveRecordCursor<K>
         if (length == 0 || (length == "\\N".length() && bytes[start] == '\\' && bytes[start + 1] == 'N')) {
             wasNull = true;
         }
-        else if (hiveTypes[column] == HiveType.TIMESTAMP) {
+        else if (hiveTypes[column].equals(HiveType.HIVE_DATE)) {
+            String value = new String(bytes, start, length);
+            longs[column] = DATE_PARSER.parseMillis(value);
+            wasNull = false;
+        }
+        else if (hiveTypes[column].equals(HiveType.HIVE_TIMESTAMP)) {
             String value = new String(bytes, start, length);
             longs[column] = parseHiveTimestamp(value, hiveStorageTimeZone);
             wasNull = false;
@@ -477,7 +494,7 @@ class ColumnarTextHiveRecordCursor<K>
         if (length == "\\N".length() && bytes[start] == '\\' && bytes[start + 1] == 'N') {
             wasNull = true;
         }
-        else if (hiveTypes[column] == HiveType.MAP || hiveTypes[column] == HiveType.LIST || hiveTypes[column] == HiveType.STRUCT) {
+        else if (hiveTypes[column].getCategory() == MAP || hiveTypes[column].getCategory() == LIST || hiveTypes[column].getCategory() == STRUCT) {
             // temporarily special case MAP, LIST, and STRUCT types as strings
             // TODO: create a real parser for these complex types when we implement data types
             LazyObject<? extends ObjectInspector> lazyObject = LazyFactory.createLazyObject(fieldInspectors[column]);
@@ -491,7 +508,7 @@ class ColumnarTextHiveRecordCursor<K>
             slices[column] = Slices.wrappedBuffer(Arrays.copyOfRange(bytes, start, start + length));
 
             // this is unbelievably stupid but Hive base64 encodes binary data in a binary file format
-            if (hiveTypes[column] == HiveType.BINARY) {
+            if (hiveTypes[column].equals(HiveType.HIVE_BINARY)) {
                 // and yes we end up with an extra copy here because the Base64 only handles whole arrays
                 slices[column] = Slices.wrappedBuffer(Base64.decodeBase64(slices[column].getBytes()));
             }
@@ -525,6 +542,9 @@ class ColumnarTextHiveRecordCursor<K>
         }
         else if (VARCHAR.equals(type) || VARBINARY.equals(type)) {
             parseStringColumn(column);
+        }
+        else if (type.equals(DATE)) {
+            parseLongColumn(column);
         }
         else if (type.equals(TIMESTAMP)) {
             parseLongColumn(column);

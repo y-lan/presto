@@ -14,8 +14,7 @@
 package com.facebook.presto.operator;
 
 import com.facebook.presto.execution.TaskId;
-import com.facebook.presto.operator.FilterAndProjectOperator.FilterAndProjectOperatorFactory;
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
@@ -27,14 +26,13 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 
+import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
 import static com.facebook.presto.operator.OperatorAssertion.assertOperatorEquals;
 import static com.facebook.presto.operator.ProjectionFunctions.singleColumn;
 import static com.facebook.presto.operator.RowPagesBuilder.rowPagesBuilder;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static java.util.concurrent.Executors.newCachedThreadPool;
@@ -49,8 +47,8 @@ public class TestFilterAndProjectOperator
     public void setUp()
     {
         executor = newCachedThreadPool(daemonThreadsNamed("test"));
-        ConnectorSession session = new ConnectorSession("user", "source", "catalog", "schema", UTC_KEY, Locale.ENGLISH, "address", "agent");
-        driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, session)
+
+        driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, TEST_SESSION)
                 .addPipelineContext(true, true)
                 .addDriverContext();
     }
@@ -69,25 +67,26 @@ public class TestFilterAndProjectOperator
                 .addSequencePage(100, 0, 0)
                 .build();
 
-        OperatorFactory operatorFactory = new FilterAndProjectOperatorFactory(
-                0,
-                new FilterFunction()
-                {
-                    @Override
-                    public boolean filter(int position, Block... blocks)
-                    {
-                        long value = BIGINT.getLong(blocks[1], position);
-                        return 10 <= value && value < 20;
-                    }
+        FilterFunction filter = new FilterFunction()
+        {
+            @Override
+            public boolean filter(int position, Block... blocks)
+            {
+                long value = BIGINT.getLong(blocks[1], position);
+                return 10 <= value && value < 20;
+            }
 
-                    @Override
-                    public boolean filter(RecordCursor cursor)
-                    {
-                        long value = cursor.getLong(0);
-                        return 10 <= value && value < 20;
-                    }
-                },
-                ImmutableList.of(singleColumn(VARCHAR, 0), new Add5Projection(1)));
+            @Override
+            public boolean filter(RecordCursor cursor)
+            {
+                long value = cursor.getLong(0);
+                return 10 <= value && value < 20;
+            }
+        };
+        OperatorFactory operatorFactory = new FilterAndProjectOperator.FilterAndProjectOperatorFactory(
+                0,
+                new GenericPageProcessor(filter, ImmutableList.of(singleColumn(VARCHAR, 0), new Add5Projection(1))),
+                ImmutableList.<Type>of(VARCHAR, BIGINT));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 

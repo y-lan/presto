@@ -39,7 +39,7 @@ import static org.testng.Assert.fail;
 
 public class TesJdbcMetadata
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "default", "default", TimeZoneKey.UTC_KEY, Locale.ENGLISH, null, null);
+    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", TimeZoneKey.UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
     private static final String CONNECTOR_ID = "TEST";
 
     private JdbcMetadata metadata;
@@ -74,31 +74,6 @@ public class TesJdbcMetadata
         assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("example", "unknown")));
         assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("unknown", "numbers")));
         assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("unknown", "unknown")));
-    }
-
-    @Test
-    public void testGetColumnHandle()
-    {
-        // known column
-        assertEquals(metadata.getColumnHandle(tableHandle, "text"),
-                new JdbcColumnHandle(CONNECTOR_ID, "text", VarcharType.VARCHAR, 0));
-
-        // unknown column
-        assertNull(metadata.getColumnHandle(tableHandle, "unknown"));
-
-        // unknown table
-        try {
-            metadata.getColumnHandle(new JdbcTableHandle(CONNECTOR_ID, new SchemaTableName("example", "numbers"), "unknown", "unknown", "unknown"), "unknown");
-            fail("Expected getColumnHandle of unknown table to throw a TableNotFoundException");
-        }
-        catch (TableNotFoundException expected) {
-        }
-        try {
-            metadata.getColumnHandle(new JdbcTableHandle(CONNECTOR_ID, new SchemaTableName("example", "unknown"), null, "example", "unknown"), "unknown");
-            fail("Expected getColumnHandle of unknown table to throw a TableNotFoundException");
-        }
-        catch (TableNotFoundException expected) {
-        }
     }
 
     @Test

@@ -18,6 +18,9 @@ import io.airlift.slice.Slice;
 import io.airlift.slice.SliceInput;
 import io.airlift.slice.SliceOutput;
 
+import static com.facebook.presto.spi.block.EncoderUtil.decodeNullBits;
+import static com.facebook.presto.spi.block.EncoderUtil.encodeNullsAsBits;
+
 public class VariableWidthBlockEncoding
         implements BlockEncoding
 {
@@ -47,19 +50,7 @@ public class VariableWidthBlockEncoding
             totalLength += length;
         }
 
-        // write null bits 8 at a time
-        for (int position = 0; position < (positionCount & ~0b111); position += 8) {
-            byte value = 0;
-            value |= variableWidthBlock.isNull(position)     ? 0b1000_0000 : 0;
-            value |= variableWidthBlock.isNull(position + 1) ? 0b0100_0000 : 0;
-            value |= variableWidthBlock.isNull(position + 2) ? 0b0010_0000 : 0;
-            value |= variableWidthBlock.isNull(position + 3) ? 0b0001_0000 : 0;
-            value |= variableWidthBlock.isNull(position + 4) ? 0b0000_1000 : 0;
-            value |= variableWidthBlock.isNull(position + 5) ? 0b0000_0100 : 0;
-            value |= variableWidthBlock.isNull(position + 6) ? 0b0000_0010 : 0;
-            value |= variableWidthBlock.isNull(position + 7) ? 0b0000_0001 : 0;
-            sliceOutput.appendByte(value);
-        }
+        encodeNullsAsBits(sliceOutput, variableWidthBlock);
 
         // write last null bits
         if ((positionCount & 0b111) > 0) {
@@ -74,7 +65,7 @@ public class VariableWidthBlockEncoding
 
         sliceOutput
                 .appendInt(totalLength)
-                .writeBytes(variableWidthBlock.getRawSlice(), variableWidthBlock.getPositionOffset(0), totalLength);
+                .writeBytes(variableWidthBlock.getRawSlice(0), variableWidthBlock.getPositionOffset(0), totalLength);
     }
 
     @Override
@@ -90,29 +81,7 @@ public class VariableWidthBlockEncoding
             offsets[position + 1] = offset;
         }
 
-        // read null bits 8 at a time
-        boolean[]  valueIsNull = new boolean[positionCount];
-        for (int position = 0; position < (positionCount & ~0b111); position += 8) {
-            byte value = sliceInput.readByte();
-            valueIsNull[position    ] = ((value & 0b1000_0000) != 0);
-            valueIsNull[position + 1] = ((value & 0b0100_0000) != 0);
-            valueIsNull[position + 2] = ((value & 0b0010_0000) != 0);
-            valueIsNull[position + 3] = ((value & 0b0001_0000) != 0);
-            valueIsNull[position + 4] = ((value & 0b0000_1000) != 0);
-            valueIsNull[position + 5] = ((value & 0b0000_0100) != 0);
-            valueIsNull[position + 6] = ((value & 0b0000_0010) != 0);
-            valueIsNull[position + 7] = ((value & 0b0000_0001) != 0);
-        }
-
-        // read last null bits
-        if ((positionCount & 0b111) > 0) {
-            byte value = sliceInput.readByte();
-            int mask = 0b1000_0000;
-            for (int position = positionCount & ~0b111; position < positionCount; position++) {
-                valueIsNull[position] = ((value & mask) != 0);
-                mask >>>= 1;
-            }
-        }
+        boolean[] valueIsNull = decodeNullBits(sliceInput, positionCount);
 
         int blockSize = sliceInput.readInt();
         Slice slice = sliceInput.readSlice(blockSize);

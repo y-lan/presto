@@ -13,8 +13,8 @@
  */
 package com.facebook.presto.tests;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.metadata.QualifiedTableName;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.testing.MaterializedRow;
 import com.facebook.presto.testing.QueryRunner;
@@ -22,13 +22,16 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableMultiset;
 import com.google.common.collect.Iterables;
 import io.airlift.log.Logger;
+import io.airlift.tpch.TpchTable;
 import io.airlift.units.Duration;
 import org.intellij.lang.annotations.Language;
 
 import java.util.List;
 
 import static com.facebook.presto.util.Types.checkType;
+import static io.airlift.units.Duration.nanosSince;
 import static java.lang.String.format;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
@@ -43,7 +46,7 @@ public final class QueryAssertions
     }
 
     public static void assertQuery(QueryRunner actualQueryRunner,
-            ConnectorSession actualSession,
+            Session actualSession,
             @Language("SQL") String actual,
             H2QueryRunner h2QueryRunner,
             @Language("SQL") String expected,
@@ -52,11 +55,11 @@ public final class QueryAssertions
     {
         long start = System.nanoTime();
         MaterializedResult actualResults = actualQueryRunner.execute(actualSession, actual).toJdbcTypes();
-        Duration actualTime = Duration.nanosSince(start);
+        Duration actualTime = nanosSince(start);
 
         long expectedStart = System.nanoTime();
         MaterializedResult expectedResults = h2QueryRunner.execute(expected, actualResults.getTypes());
-        log.info("FINISHED in presto: %s, h2: %s, total: %s", actualTime, Duration.nanosSince(expectedStart), Duration.nanosSince(start));
+        log.info("FINISHED in presto: %s, h2: %s, total: %s", actualTime, nanosSince(expectedStart), nanosSince(start));
 
         if (ensureOrdering) {
             assertEquals(actualResults.getMaterializedRows(), expectedResults.getMaterializedRows());
@@ -84,7 +87,7 @@ public final class QueryAssertions
 
     public static void assertApproximateQuery(
             QueryRunner queryRunner,
-            ConnectorSession session,
+            Session session,
             @Language("SQL") String actual,
             H2QueryRunner h2QueryRunner,
             @Language("SQL") String expected)
@@ -92,7 +95,7 @@ public final class QueryAssertions
     {
         long start = System.nanoTime();
         MaterializedResult actualResults = queryRunner.execute(session, actual);
-        log.info("FINISHED in %s", Duration.nanosSince(start));
+        log.info("FINISHED in %s", nanosSince(start));
 
         MaterializedResult expectedResults = h2QueryRunner.execute(expected, actualResults.getTypes());
         assertApproximatelyEqual(actualResults.getMaterializedRows(), expectedResults.getMaterializedRows());
@@ -124,7 +127,23 @@ public final class QueryAssertions
         }
     }
 
-    public static void copyAllTables(QueryRunner queryRunner, String sourceCatalog, String sourceSchema, ConnectorSession session)
+    public static void copyTpchTables(
+            QueryRunner queryRunner,
+            String sourceCatalog,
+            String sourceSchema,
+            Session session,
+            Iterable<TpchTable<?>> tables)
+            throws Exception
+    {
+        log.info("Loading data from %s.%s...", sourceCatalog, sourceSchema);
+        long startTime = System.nanoTime();
+        for (TpchTable<?> table : tables) {
+            copyTable(queryRunner, sourceCatalog, sourceSchema, table.getTableName().toLowerCase(), session);
+        }
+        log.info("Loading from %s.%s complete in %s", sourceCatalog, sourceSchema, nanosSince(startTime).toString(SECONDS));
+    }
+
+    public static void copyAllTables(QueryRunner queryRunner, String sourceCatalog, String sourceSchema, Session session)
             throws Exception
     {
         for (QualifiedTableName table : queryRunner.listTables(session, sourceCatalog, sourceSchema)) {
@@ -135,18 +154,19 @@ public final class QueryAssertions
         }
     }
 
-    public static void copyTable(QueryRunner queryRunner, String sourceCatalog, String sourceSchema, String sourceTable, ConnectorSession session)
+    public static void copyTable(QueryRunner queryRunner, String sourceCatalog, String sourceSchema, String sourceTable, Session session)
             throws Exception
     {
         QualifiedTableName table = new QualifiedTableName(sourceCatalog, sourceSchema, sourceTable);
         copyTable(queryRunner, table, session);
     }
 
-    public static void copyTable(QueryRunner queryRunner, QualifiedTableName table, ConnectorSession session)
+    public static void copyTable(QueryRunner queryRunner, QualifiedTableName table, Session session)
     {
+        long start = System.nanoTime();
         log.info("Running import for %s", table.getTableName());
         @Language("SQL") String sql = format("CREATE TABLE %s AS SELECT * FROM %s", table.getTableName(), table);
         long rows = checkType(queryRunner.execute(session, sql).getMaterializedRows().get(0).getField(0), Long.class, "rows");
-        log.info("Imported %s rows for %s", rows, table.getTableName());
+        log.info("Imported %s rows for %s in %s", rows, table.getTableName(), nanosSince(start).convertToMostSuccinctTimeUnit());
     }
 }

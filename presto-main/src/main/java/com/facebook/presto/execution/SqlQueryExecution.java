@@ -14,10 +14,10 @@
 package com.facebook.presto.execution;
 
 import com.facebook.presto.OutputBuffers;
+import com.facebook.presto.Session;
 import com.facebook.presto.UnpartitionedPagePartitionFunction;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.metadata.Metadata;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.Analyzer;
@@ -57,12 +57,12 @@ public class SqlQueryExecution
         implements QueryExecution
 {
     private static final OutputBuffers ROOT_OUTPUT_BUFFERS = INITIAL_EMPTY_OUTPUT_BUFFERS
-            .withBuffer("out", new UnpartitionedPagePartitionFunction())
+            .withBuffer(new TaskId("output", "buffer", "id"), new UnpartitionedPagePartitionFunction())
             .withNoMoreBufferIds();
 
     private final QueryStateMachine stateMachine;
 
-    private final ConnectorSession session;
+    private final Session session;
     private final Statement statement;
     private final Metadata metadata;
     private final SqlParser sqlParser;
@@ -74,6 +74,8 @@ public class SqlQueryExecution
     private final int scheduleSplitBatchSize;
     private final int initialHashPartitions;
     private final boolean experimentalSyntaxEnabled;
+    private final boolean distributedIndexJoinsEnabled;
+    private final boolean distributedJoinsEnabled;
     private final ExecutorService queryExecutor;
 
     private final QueryExplainer queryExplainer;
@@ -82,7 +84,7 @@ public class SqlQueryExecution
 
     public SqlQueryExecution(QueryId queryId,
             String query,
-            ConnectorSession session,
+            Session session,
             URI self,
             Statement statement,
             Metadata metadata,
@@ -96,6 +98,8 @@ public class SqlQueryExecution
             int maxPendingSplitsPerNode,
             int initialHashPartitions,
             boolean experimentalSyntaxEnabled,
+            boolean distributedIndexJoinsEnabled,
+            boolean distributedJoinsEnabled,
             ExecutorService queryExecutor,
             NodeTaskMap nodeTaskMap)
     {
@@ -111,6 +115,8 @@ public class SqlQueryExecution
             this.locationFactory = checkNotNull(locationFactory, "locationFactory is null");
             this.queryExecutor = checkNotNull(queryExecutor, "queryExecutor is null");
             this.experimentalSyntaxEnabled = experimentalSyntaxEnabled;
+            this.distributedIndexJoinsEnabled = distributedIndexJoinsEnabled;
+            this.distributedJoinsEnabled = distributedJoinsEnabled;
             this.nodeTaskMap = checkNotNull(nodeTaskMap, "nodeTaskMap is null");
 
             checkArgument(maxPendingSplitsPerNode > 0, "scheduleSplitBatchSize must be greater than 0");
@@ -125,7 +131,7 @@ public class SqlQueryExecution
             checkNotNull(self, "self is null");
             this.stateMachine = new QueryStateMachine(queryId, query, session, self, queryExecutor);
 
-            this.queryExplainer = new QueryExplainer(session, planOptimizers, metadata, sqlParser, experimentalSyntaxEnabled);
+            this.queryExplainer = new QueryExplainer(session, planOptimizers, metadata, sqlParser, experimentalSyntaxEnabled, distributedIndexJoinsEnabled, distributedJoinsEnabled);
         }
     }
 
@@ -205,7 +211,7 @@ public class SqlQueryExecution
         stateMachine.setInputs(inputs);
 
         // fragment the plan
-        SubPlan subplan = new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, false);
+        SubPlan subplan = new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, false, distributedIndexJoinsEnabled, distributedJoinsEnabled);
 
         stateMachine.recordAnalysisTime(analysisStart);
         return subplan;
@@ -384,6 +390,8 @@ public class SqlQueryExecution
         private final int maxPendingSplitsPerNode;
         private final int initialHashPartitions;
         private final boolean experimentalSyntaxEnabled;
+        private final boolean distributedIndexJoinsEnabled;
+        private final boolean distributedJoinsEnabled;
         private final Metadata metadata;
         private final SqlParser sqlParser;
         private final SplitManager splitManager;
@@ -418,13 +426,16 @@ public class SqlQueryExecution
             this.nodeScheduler = checkNotNull(nodeScheduler, "nodeScheduler is null");
             this.planOptimizers = checkNotNull(planOptimizers, "planOptimizers is null");
             this.remoteTaskFactory = checkNotNull(remoteTaskFactory, "remoteTaskFactory is null");
-            this.experimentalSyntaxEnabled = checkNotNull(featuresConfig, "featuresConfig is null").isExperimentalSyntaxEnabled();
+            checkNotNull(featuresConfig, "featuresConfig is null");
+            this.experimentalSyntaxEnabled = featuresConfig.isExperimentalSyntaxEnabled();
+            this.distributedIndexJoinsEnabled = featuresConfig.isDistributedIndexJoinsEnabled();
+            this.distributedJoinsEnabled = featuresConfig.isDistributedJoinsEnabled();
             this.executor = checkNotNull(executor, "executor is null");
             this.nodeTaskMap = checkNotNull(nodeTaskMap, "nodeTaskMap is null");
         }
 
         @Override
-        public SqlQueryExecution createQueryExecution(QueryId queryId, String query, ConnectorSession session, Statement statement)
+        public SqlQueryExecution createQueryExecution(QueryId queryId, String query, Session session, Statement statement)
         {
             SqlQueryExecution queryExecution = new SqlQueryExecution(queryId,
                     query,
@@ -442,6 +453,8 @@ public class SqlQueryExecution
                     maxPendingSplitsPerNode,
                     initialHashPartitions,
                     experimentalSyntaxEnabled,
+                    distributedIndexJoinsEnabled,
+                    distributedJoinsEnabled,
                     executor,
                     nodeTaskMap);
 

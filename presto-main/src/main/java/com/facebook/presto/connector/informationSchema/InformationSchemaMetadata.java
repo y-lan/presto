@@ -13,8 +13,9 @@
  */
 package com.facebook.presto.connector.informationSchema;
 
-import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.Session;
 import com.facebook.presto.spi.ColumnMetadata;
+import com.facebook.presto.spi.ConnectorColumnHandle;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableMetadata;
@@ -122,11 +123,22 @@ public class InformationSchemaMetadata
     }
 
     @Override
-    public ConnectorTableHandle getTableHandle(ConnectorSession session, SchemaTableName tableName)
+    public ConnectorTableHandle getTableHandle(ConnectorSession connectorSession, SchemaTableName tableName)
     {
         if (!TABLES.containsKey(tableName)) {
             return null;
         }
+
+        Session session = Session.builder()
+                .setUser(connectorSession.getUser())
+                .setSource("information_schema")
+                .setCatalog("") // default catalog is not be used
+                .setSchema("") // default schema is not be used
+                .setTimeZoneKey(connectorSession.getTimeZoneKey())
+                .setLocale(connectorSession.getLocale())
+                .setStartTime(connectorSession.getStartTime())
+                .build();
+
         return new InformationSchemaTableHandle(session, catalogName, tableName.getSchemaName(), tableName.getTableName());
     }
 
@@ -145,18 +157,6 @@ public class InformationSchemaMetadata
         }
 
         return ImmutableList.copyOf(filter(TABLES.keySet(), compose(equalTo(schemaNameOrNull), schemaNameGetter())));
-    }
-
-    @Override
-    public ConnectorColumnHandle getColumnHandle(ConnectorTableHandle tableHandle, String columnName)
-    {
-        InformationSchemaTableHandle informationSchemaTableHandle = checkTableHandle(tableHandle);
-        ConnectorTableMetadata tableMetadata = TABLES.get(informationSchemaTableHandle.getSchemaTableName());
-
-        if (findColumnMetadata(tableMetadata, columnName) == null) {
-            return null;
-        }
-        return new InformationSchemaColumnHandle(columnName);
     }
 
     @Override

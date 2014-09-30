@@ -13,11 +13,11 @@
  */
 package com.facebook.presto.raptor;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.benchmark.BenchmarkSuite;
 import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.QualifiedTableName;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.NodeManager;
 import com.facebook.presto.spi.block.BlockEncodingSerde;
 import com.facebook.presto.spi.type.TypeManager;
@@ -29,12 +29,12 @@ import com.google.common.collect.ImmutableMap;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Locale;
 import java.util.Map;
 
 import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.facebook.presto.testing.TestingBlockEncodingManager.createTestingBlockEncodingManager;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Locale.ENGLISH;
 
 public final class RaptorBenchmarkQueryRunner
 {
@@ -55,7 +55,14 @@ public final class RaptorBenchmarkQueryRunner
 
     public static LocalQueryRunner createLocalQueryRunner()
     {
-        ConnectorSession session = new ConnectorSession("user", "test", "default", "default", UTC_KEY, Locale.ENGLISH, null, null);
+        Session session = Session.builder()
+                .setUser("user")
+                .setSource("test")
+                .setCatalog("default")
+                .setSchema("default")
+                .setTimeZoneKey(UTC_KEY)
+                .setLocale(ENGLISH)
+                .build();
         LocalQueryRunner localQueryRunner = new LocalQueryRunner(session);
 
         // add tpch

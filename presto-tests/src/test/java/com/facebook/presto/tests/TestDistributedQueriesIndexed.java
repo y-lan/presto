@@ -13,13 +13,13 @@
  */
 package com.facebook.presto.tests;
 
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.Session;
 import com.facebook.presto.tests.tpch.IndexedTpchPlugin;
-import com.facebook.presto.tpch.TpchMetadata;
 import io.airlift.testing.Closeables;
 import org.testng.annotations.AfterClass;
 
 import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.tpch.TpchMetadata.TINY_SCHEMA_NAME;
 import static java.util.Locale.ENGLISH;
 
 public class TestDistributedQueriesIndexed
@@ -41,7 +41,15 @@ public class TestDistributedQueriesIndexed
     private static DistributedQueryRunner createQueryRunner()
             throws Exception
     {
-        ConnectorSession session = new ConnectorSession("user", "test", "tpch_indexed", TpchMetadata.TINY_SCHEMA_NAME, UTC_KEY, ENGLISH, null, null);
+        Session session = Session.builder()
+                .setUser("user")
+                .setSource("test")
+                .setCatalog("tpch_indexed")
+                .setSchema(TINY_SCHEMA_NAME)
+                .setTimeZoneKey(UTC_KEY)
+                .setLocale(ENGLISH)
+                .build();
+
         DistributedQueryRunner queryRunner = new DistributedQueryRunner(session, 3);
 
         queryRunner.installPlugin(new IndexedTpchPlugin(INDEX_SPEC));

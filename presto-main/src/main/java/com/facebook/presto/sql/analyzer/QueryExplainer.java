@@ -13,8 +13,8 @@
  */
 package com.facebook.presto.sql.analyzer;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.metadata.Metadata;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.planner.DistributedLogicalPlanner;
 import com.facebook.presto.sql.planner.LogicalPlanner;
@@ -33,24 +33,30 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 public class QueryExplainer
 {
-    private final ConnectorSession session;
+    private final Session session;
     private final List<PlanOptimizer> planOptimizers;
     private final Metadata metadata;
     private final SqlParser sqlParser;
     private final boolean experimentalSyntaxEnabled;
+    private final boolean distributedIndexJoinsEnabled;
+    private final boolean distributedJoinsEnabled;
 
     public QueryExplainer(
-            ConnectorSession session,
+            Session session,
             List<PlanOptimizer> planOptimizers,
             Metadata metadata,
             SqlParser sqlParser,
-            boolean experimentalSyntaxEnabled)
+            boolean experimentalSyntaxEnabled,
+            boolean distributedIndexJoinsEnabled,
+            boolean distributedJoinsEnabled)
     {
         this.session = checkNotNull(session, "session is null");
         this.planOptimizers = checkNotNull(planOptimizers, "planOptimizers is null");
         this.metadata = checkNotNull(metadata, "metadata is null");
         this.sqlParser = checkNotNull(sqlParser, "sqlParser is null");
         this.experimentalSyntaxEnabled = experimentalSyntaxEnabled;
+        this.distributedIndexJoinsEnabled = distributedIndexJoinsEnabled;
+        this.distributedJoinsEnabled = distributedJoinsEnabled;
     }
 
     public String getPlan(Statement statement, ExplainType.Type planType)
@@ -110,6 +116,6 @@ public class QueryExplainer
         LogicalPlanner logicalPlanner = new LogicalPlanner(session, planOptimizers, idAllocator, metadata);
         Plan plan = logicalPlanner.plan(analysis);
 
-        return new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, false);
+        return new DistributedLogicalPlanner(session, metadata, idAllocator).createSubPlans(plan, false, distributedIndexJoinsEnabled, distributedJoinsEnabled);
     }
 }

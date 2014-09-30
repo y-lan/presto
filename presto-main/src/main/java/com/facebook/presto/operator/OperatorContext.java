@@ -14,7 +14,8 @@
 package com.facebook.presto.operator;
 
 import com.facebook.presto.ExceededMemoryLimitException;
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.Session;
+import com.facebook.presto.spi.Page;
 import com.google.common.base.Function;
 import com.google.common.base.Supplier;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -98,7 +99,7 @@ public class OperatorContext
         return driverContext;
     }
 
-    public ConnectorSession getSession()
+    public Session getSession()
     {
         return driverContext.getSession();
     }
@@ -118,26 +119,31 @@ public class OperatorContext
     public void recordAddInput(Page page)
     {
         addInputCalls.incrementAndGet();
-        addInputWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), System.nanoTime()));
+        recordInputWallNanos(nanosBetween(intervalWallStart.get(), System.nanoTime()));
         addInputCpuNanos.getAndAdd(nanosBetween(intervalCpuStart.get(), currentThreadCpuTime()));
         addInputUserNanos.getAndAdd(nanosBetween(intervalUserStart.get(), currentThreadUserTime()));
 
         if (page != null) {
-            inputDataSize.update(page.getDataSize().toBytes());
+            inputDataSize.update(page.getSizeInBytes());
             inputPositions.update(page.getPositionCount());
         }
     }
 
-    public void recordGeneratedInput(DataSize dataSize, long positions, long readNanos)
+    public void recordGeneratedInput(long sizeInBytes, long positions)
     {
-        inputDataSize.update(dataSize.toBytes());
-        inputPositions.update(positions);
-        addInputWallNanos.getAndAdd(readNanos);
+        recordGeneratedInput(sizeInBytes, positions, 0);
     }
 
-    public void recordGeneratedInput(DataSize dataSize, long positions)
+    public void recordGeneratedInput(long sizeInBytes, long positions, long readNanos)
     {
-        recordGeneratedInput(dataSize, positions, 0);
+        inputDataSize.update(sizeInBytes);
+        inputPositions.update(positions);
+        recordInputWallNanos(readNanos);
+    }
+
+    public long recordInputWallNanos(long readNanos)
+    {
+        return addInputWallNanos.getAndAdd(readNanos);
     }
 
     public void recordGetOutput(Page page)
@@ -148,14 +154,14 @@ public class OperatorContext
         getOutputUserNanos.getAndAdd(nanosBetween(intervalUserStart.get(), currentThreadUserTime()));
 
         if (page != null) {
-            outputDataSize.update(page.getDataSize().toBytes());
+            outputDataSize.update(page.getSizeInBytes());
             outputPositions.update(page.getPositionCount());
         }
     }
 
-    public void recordGeneratedOutput(DataSize dataSize, long positions)
+    public void recordGeneratedOutput(long sizeInBytes, long positions)
     {
-        outputDataSize.update(dataSize.toBytes());
+        outputDataSize.update(sizeInBytes);
         outputPositions.update(positions);
     }
 
@@ -309,6 +315,7 @@ public class OperatorContext
     {
         return new Function<OperatorContext, OperatorStats>()
         {
+            @Override
             public OperatorStats apply(OperatorContext operatorContext)
             {
                 return operatorContext.getOperatorStats();

@@ -13,9 +13,9 @@
  */
 package com.facebook.presto.sql;
 
+import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.MetadataManager;
 import com.facebook.presto.operator.scalar.FunctionAssertions;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.type.Type;
@@ -39,17 +39,16 @@ import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.util.IdentityHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntervalDayTimeType.INTERVAL_DAY_TIME;
 import static com.facebook.presto.spi.type.TimeType.TIME;
-import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.ExpressionFormatter.formatExpression;
@@ -61,7 +60,6 @@ import static org.testng.Assert.assertEquals;
 
 public class TestExpressionInterpreter
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "catalog", "schema", UTC_KEY, Locale.ENGLISH, null, null);
     private static final Map<Symbol, Type> SYMBOL_TYPES = ImmutableMap.<Symbol, Type>builder()
             .put(new Symbol("bound_long"), BIGINT)
             .put(new Symbol("bound_string"), VARCHAR)
@@ -87,6 +85,7 @@ public class TestExpressionInterpreter
             .build();
 
     private static final SqlParser SQL_PARSER = new SqlParser();
+    private static final Metadata METADATA = new MetadataManager();
 
     @Test
     public void testAnd()
@@ -372,7 +371,7 @@ public class TestExpressionInterpreter
     public void testCurrentTimestamp()
             throws Exception
     {
-        double current = SESSION.getStartTime() / 1000.0;
+        double current = TEST_SESSION.getStartTime() / 1000.0;
         assertOptimizedEquals("current_timestamp = from_unixtime(" + current + ")", "true");
         double future = current + TimeUnit.MINUTES.toSeconds(1);
         assertOptimizedEquals("current_timestamp > from_unixtime(" + future + ")", "false");
@@ -836,11 +835,10 @@ public class TestExpressionInterpreter
     {
         assertRoundTrip(expression);
 
-        MetadataManager metadata = new MetadataManager();
-        Expression parsedExpression = FunctionAssertions.createExpression(expression, metadata, SYMBOL_TYPES);
+        Expression parsedExpression = FunctionAssertions.createExpression(expression, METADATA, SYMBOL_TYPES);
 
-        IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(SESSION, metadata, SQL_PARSER, SYMBOL_TYPES, parsedExpression);
-        ExpressionInterpreter interpreter = expressionOptimizer(parsedExpression, metadata, SESSION, expressionTypes);
+        IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(TEST_SESSION, METADATA, SQL_PARSER, SYMBOL_TYPES, parsedExpression);
+        ExpressionInterpreter interpreter = expressionOptimizer(parsedExpression, METADATA, TEST_SESSION, expressionTypes);
         return interpreter.optimize(new SymbolResolver()
         {
             @Override
@@ -872,7 +870,7 @@ public class TestExpressionInterpreter
     {
         assertRoundTrip(expression);
 
-        Expression parsedExpression = FunctionAssertions.createExpression(expression, new MetadataManager(), SYMBOL_TYPES);
+        Expression parsedExpression = FunctionAssertions.createExpression(expression, METADATA, SYMBOL_TYPES);
 
         return evaluate(parsedExpression);
     }
@@ -885,9 +883,8 @@ public class TestExpressionInterpreter
 
     private static Object evaluate(Expression expression)
     {
-        MetadataManager metadata = new MetadataManager();
-        IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(SESSION, metadata, SQL_PARSER, SYMBOL_TYPES, expression);
-        ExpressionInterpreter interpreter = expressionInterpreter(expression, metadata, SESSION, expressionTypes);
+        IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(TEST_SESSION, METADATA, SQL_PARSER, SYMBOL_TYPES, expression);
+        ExpressionInterpreter interpreter = expressionInterpreter(expression, METADATA, TEST_SESSION, expressionTypes);
 
         return interpreter.evaluate((RecordCursor) null);
     }

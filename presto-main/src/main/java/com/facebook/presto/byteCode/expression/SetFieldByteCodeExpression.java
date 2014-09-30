@@ -82,7 +82,7 @@ class SetFieldByteCodeExpression
     {
         super(type(void.class));
         if (instance != null) {
-            checkArgument(instance.getType().getPrimitiveType() == null, "Type %s does not have fields", instance.getType());
+            checkArgument(!instance.getType().isPrimitive(), "Type %s does not have fields", instance.getType());
         }
         this.instance = instance;
         this.declaringClass = checkNotNull(declaringClass, "declaringClass is null");
@@ -107,7 +107,7 @@ class SetFieldByteCodeExpression
     }
 
     @Override
-    public String toString()
+    protected String formatOneLine()
     {
         if (instance == null) {
             return declaringClass.getSimpleName() + "." + name + " = " + value;

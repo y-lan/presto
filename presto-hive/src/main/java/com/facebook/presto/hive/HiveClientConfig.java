@@ -50,6 +50,8 @@ public class HiveClientConfig
     private boolean allowDropTable;
     private boolean allowRenameTable;
 
+    private boolean allowCorruptWritesForTesting;
+
     private Duration metastoreCacheTtl = new Duration(1, TimeUnit.HOURS);
     private Duration metastoreRefreshInterval = new Duration(2, TimeUnit.MINUTES);
     private int maxMetastoreRefreshThreads = 100;
@@ -70,8 +72,11 @@ public class HiveClientConfig
     private int s3MaxErrorRetries = 10;
     private Duration s3MaxBackoffTime = new Duration(10, TimeUnit.MINUTES);
     private Duration s3ConnectTimeout = new Duration(5, TimeUnit.SECONDS);
+    private Duration s3SocketTimeout = new Duration(5, TimeUnit.SECONDS);
     private int s3MaxConnections = 500;
     private File s3StagingDirectory = new File(StandardSystemProperty.JAVA_IO_TMPDIR.value());
+    private DataSize s3MultipartMinFileSize = new DataSize(16, MEGABYTE);
+    private DataSize s3MultipartMinPartSize = new DataSize(5, MEGABYTE);
 
     private HiveStorageFormat hiveStorageFormat = HiveStorageFormat.RCBINARY;
 
@@ -188,13 +193,28 @@ public class HiveClientConfig
         return this;
     }
 
+    @Deprecated
+    public boolean getAllowCorruptWritesForTesting()
+    {
+        return allowCorruptWritesForTesting;
+    }
+
+    @Deprecated
+    @Config("hive.allow-corrupt-writes-for-testing")
+    @ConfigDescription("Allow Hive connector to write data even when data will likely be corrupt")
+    public HiveClientConfig setAllowCorruptWritesForTesting(boolean allowCorruptWritesForTesting)
+    {
+        this.allowCorruptWritesForTesting = allowCorruptWritesForTesting;
+        return this;
+    }
+
     public boolean getAllowDropTable()
     {
         return this.allowDropTable;
     }
 
     @Config("hive.allow-drop-table")
-    @ConfigDescription("Allow hive connector to drop table")
+    @ConfigDescription("Allow Hive connector to drop table")
     public HiveClientConfig setAllowDropTable(boolean allowDropTable)
     {
         this.allowDropTable = allowDropTable;
@@ -355,7 +375,8 @@ public class HiveClientConfig
         return hiveStorageFormat;
     }
 
-    @Config("hive.storage-format")
+    // TODO: this is currently broken
+    // @Config("hive.storage-format")
     public HiveClientConfig setHiveStorageFormat(HiveStorageFormat hiveStorageFormat)
     {
         this.hiveStorageFormat = hiveStorageFormat;
@@ -476,6 +497,20 @@ public class HiveClientConfig
         return this;
     }
 
+    @MinDuration("1ms")
+    @NotNull
+    public Duration getS3SocketTimeout()
+    {
+        return s3SocketTimeout;
+    }
+
+    @Config("hive.s3.socket-timeout")
+    public HiveClientConfig setS3SocketTimeout(Duration s3SocketTimeout)
+    {
+        this.s3SocketTimeout = s3SocketTimeout;
+        return this;
+    }
+
     @Min(1)
     public int getS3MaxConnections()
     {
@@ -500,6 +535,36 @@ public class HiveClientConfig
     public HiveClientConfig setS3StagingDirectory(File s3StagingDirectory)
     {
         this.s3StagingDirectory = s3StagingDirectory;
+        return this;
+    }
+
+    // TODO: add @MinDataSize(5MB) when supported in Airlift
+    @NotNull
+    public DataSize getS3MultipartMinFileSize()
+    {
+        return s3MultipartMinFileSize;
+    }
+
+    @Config("hive.s3.multipart.min-file-size")
+    @ConfigDescription("Minimum file size for an S3 multipart upload")
+    public HiveClientConfig setS3MultipartMinFileSize(DataSize size)
+    {
+        this.s3MultipartMinFileSize = size;
+        return this;
+    }
+
+    // TODO: add @MinDataSize(5MB) when supported in Airlift
+    @NotNull
+    public DataSize getS3MultipartMinPartSize()
+    {
+        return s3MultipartMinPartSize;
+    }
+
+    @Config("hive.s3.multipart.min-part-size")
+    @ConfigDescription("Minimum part size for an S3 multipart upload")
+    public HiveClientConfig setS3MultipartMinPartSize(DataSize size)
+    {
+        this.s3MultipartMinPartSize = size;
         return this;
     }
 }

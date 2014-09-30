@@ -18,11 +18,11 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
+import com.google.inject.name.Names;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.bootstrap.LifeCycleManager;
 import io.airlift.event.client.EventClient;
@@ -39,8 +39,12 @@ import java.sql.DriverManager;
 import java.util.List;
 import java.util.Set;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 public class PrestoVerifier
 {
+    public static final String SUPPORTED_EVENT_CLIENTS = "SUPPORTED_EVENT_CLIENTS";
+
     protected PrestoVerifier()
     {
     }
@@ -65,34 +69,41 @@ public class PrestoVerifier
         Bootstrap app = new Bootstrap(builder.build());
         Injector injector = app.strictConfig().initialize();
 
-        VerifierConfig config = injector.getInstance(VerifierConfig.class);
-        injector.injectMembers(this);
-        EventClient eventClient = Iterables.getOnlyElement(injector.getInstance(Key.get(new TypeLiteral<Set<EventClient>>() {})));
-
-        VerifierDao dao = new DBI(config.getQueryDatabase()).onDemand(VerifierDao.class);
-        List<QueryPair> queries = dao.getQueriesBySuite(config.getSuite(), config.getMaxQueries());
-
-        queries = applyOverrides(config, queries);
-        queries = filterQueries(queries);
-
-        // Load jdbc drivers if needed
-        if (config.getAdditionalJdbcDriverPath() != null) {
-            List<URL> urlList = getUrls(config.getAdditionalJdbcDriverPath());
-            URL[] urls = new URL[urlList.size()];
-            urlList.toArray(urls);
-            if (config.getTestJdbcDriverName() != null) {
-                loadJdbcDriver(urls, config.getTestJdbcDriverName());
+        try {
+            VerifierConfig config = injector.getInstance(VerifierConfig.class);
+            injector.injectMembers(this);
+            Set<String> supportedEventClients = injector.getInstance(Key.get(new TypeLiteral<Set<String>>() {}, Names.named(SUPPORTED_EVENT_CLIENTS)));
+            for (String clientType : config.getEventClients()) {
+                checkArgument(supportedEventClients.contains(clientType), "Unsupported event client: %s", clientType);
             }
-            if (config.getControlJdbcDriverName() != null) {
-                loadJdbcDriver(urls, config.getControlJdbcDriverName());
+            Set<EventClient> eventClients = injector.getInstance(Key.get(new TypeLiteral<Set<EventClient>>() {}));
+
+            VerifierDao dao = new DBI(config.getQueryDatabase()).onDemand(VerifierDao.class);
+            List<QueryPair> queries = dao.getQueriesBySuite(config.getSuite(), config.getMaxQueries());
+
+            queries = applyOverrides(config, queries);
+            queries = filterQueries(queries);
+
+            // Load jdbc drivers if needed
+            if (config.getAdditionalJdbcDriverPath() != null) {
+                List<URL> urlList = getUrls(config.getAdditionalJdbcDriverPath());
+                URL[] urls = new URL[urlList.size()];
+                urlList.toArray(urls);
+                if (config.getTestJdbcDriverName() != null) {
+                    loadJdbcDriver(urls, config.getTestJdbcDriverName());
+                }
+                if (config.getControlJdbcDriverName() != null) {
+                    loadJdbcDriver(urls, config.getControlJdbcDriverName());
+                }
             }
+
+            // TODO: construct this with Guice
+            Verifier verifier = new Verifier(System.out, config, eventClients);
+            verifier.run(queries);
         }
-
-        // TODO: construct this with Guice
-        Verifier verifier = new Verifier(System.out, config, eventClient);
-        verifier.run(queries);
-
-        injector.getInstance(LifeCycleManager.class).stop();
+        finally {
+            injector.getInstance(LifeCycleManager.class).stop();
+        }
     }
 
     private static void loadJdbcDriver(URL[] urls, String jdbcClassName)

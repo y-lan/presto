@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.sql.analyzer;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.metadata.ColumnHandle;
 import com.facebook.presto.metadata.FunctionInfo;
 import com.facebook.presto.metadata.Metadata;
@@ -22,7 +23,6 @@ import com.facebook.presto.metadata.TableHandle;
 import com.facebook.presto.metadata.TableMetadata;
 import com.facebook.presto.metadata.ViewDefinition;
 import com.facebook.presto.spi.ColumnMetadata;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.ExpressionUtils;
 import com.facebook.presto.sql.parser.ParsingException;
@@ -118,12 +118,12 @@ class TupleAnalyzer
         extends DefaultTraversalVisitor<TupleDescriptor, AnalysisContext>
 {
     private final Analysis analysis;
-    private final ConnectorSession session;
+    private final Session session;
     private final Metadata metadata;
     private final SqlParser sqlParser;
     private final boolean experimentalSyntaxEnabled;
 
-    public TupleAnalyzer(Analysis analysis, ConnectorSession session, Metadata metadata, SqlParser sqlParser, boolean experimentalSyntaxEnabled)
+    public TupleAnalyzer(Analysis analysis, Session session, Metadata metadata, SqlParser sqlParser, boolean experimentalSyntaxEnabled)
     {
         checkNotNull(analysis, "analysis is null");
         checkNotNull(session, "session is null");
@@ -594,12 +594,12 @@ class TupleAnalyzer
                 throw new SemanticException(NOT_SUPPORTED, node, "Window frames not yet supported");
             }
 
-            List<Type> argumentTypes = Lists.transform(windowFunction.getArguments(), new Function<Expression, Type>()
+            List<String> argumentTypes = Lists.transform(windowFunction.getArguments(), new Function<Expression, String>()
             {
                 @Override
-                public Type apply(Expression input)
+                public String apply(Expression input)
                 {
-                    return analysis.getType(input);
+                    return analysis.getType(input).getName();
                 }
             });
 
@@ -970,16 +970,18 @@ class TupleAnalyzer
     private TupleDescriptor analyzeView(Query query, QualifiedTableName name, String catalog, String schema, Table node)
     {
         try {
-            ConnectorSession viewSession = new ConnectorSession(
-                    session.getUser(),
-                    session.getSource(),
-                    catalog,
-                    schema,
-                    session.getTimeZoneKey(),
-                    session.getLocale(),
-                    session.getRemoteUserAddress(),
-                    session.getUserAgent(),
-                    session.getStartTime());
+            Session viewSession = Session.builder()
+                    .setUser(session.getUser())
+                    .setSource(session.getSource())
+                    .setCatalog(catalog)
+                    .setSchema(schema)
+                    .setTimeZoneKey(session.getTimeZoneKey())
+                    .setLocale(session.getLocale())
+                    .setRemoteUserAddress(session.getRemoteUserAddress())
+                    .setUserAgent(session.getUserAgent())
+                    .setStartTime(session.getStartTime())
+                    .build();
+
             StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, sqlParser, viewSession, experimentalSyntaxEnabled, Optional.<QueryExplainer>absent());
             return analyzer.process(query, new AnalysisContext());
         }

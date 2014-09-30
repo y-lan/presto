@@ -41,7 +41,7 @@ import static org.testng.Assert.fail;
 @Test(singleThreaded = true)
 public class TestExampleMetadata
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "default", "default", UTC_KEY, Locale.ENGLISH, null, null);
+    private static final ConnectorSession SESSION = new ConnectorSession("user", "default", UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
     private static final String CONNECTOR_ID = "TEST";
     private static final ExampleTableHandle NUMBERS_TABLE_HANDLE = new ExampleTableHandle(CONNECTOR_ID, "example", "numbers");
     private ExampleMetadata metadata;
@@ -71,31 +71,6 @@ public class TestExampleMetadata
         assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("example", "unknown")));
         assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("unknown", "numbers")));
         assertNull(metadata.getTableHandle(SESSION, new SchemaTableName("unknown", "unknown")));
-    }
-
-    @Test
-    public void testGetColumnHandle()
-    {
-        // known column
-        assertEquals(metadata.getColumnHandle(NUMBERS_TABLE_HANDLE, "text"),
-                new ExampleColumnHandle(CONNECTOR_ID, "text", VARCHAR, 0));
-
-        // unknown column
-        assertNull(metadata.getColumnHandle(NUMBERS_TABLE_HANDLE, "unknown"));
-
-        // unknown table
-        try {
-            metadata.getColumnHandle(new ExampleTableHandle(CONNECTOR_ID, "unknown", "unknown"), "unknown");
-            fail("Expected getColumnHandle of unknown table to throw a TableNotFoundException");
-        }
-        catch (TableNotFoundException expected) {
-        }
-        try {
-            metadata.getColumnHandle(new ExampleTableHandle(CONNECTOR_ID, "example", "unknown"), "unknown");
-            fail("Expected getColumnHandle of unknown table to throw a TableNotFoundException");
-        }
-        catch (TableNotFoundException expected) {
-        }
     }
 
     @Test

@@ -15,12 +15,15 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.hive.metastore.CachingHiveMetastore;
 import com.facebook.presto.hive.metastore.HiveMetastore;
+import com.facebook.presto.spi.ConnectorPageSourceProvider;
+import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.net.HostAndPort;
 import com.google.inject.Binder;
 import com.google.inject.Injector;
 import com.google.inject.Module;
 import com.google.inject.Provides;
 import com.google.inject.Scopes;
+import com.google.inject.multibindings.Multibinder;
 
 import javax.inject.Singleton;
 
@@ -43,11 +46,13 @@ public class HiveClientModule
 {
     private final String connectorId;
     private final HiveMetastore metastore;
+    private final TypeManager typeManager;
 
-    public HiveClientModule(String connectorId, HiveMetastore metastore)
+    public HiveClientModule(String connectorId, HiveMetastore metastore, TypeManager typeManager)
     {
         this.connectorId = connectorId;
         this.metastore = metastore;
+        this.typeManager = typeManager;
     }
 
     @Override
@@ -77,6 +82,18 @@ public class HiveClientModule
         binder.bind(DiscoveryLocatedHiveCluster.class).in(Scopes.SINGLETON);
         binder.bind(HiveMetastoreClientFactory.class).in(Scopes.SINGLETON);
         discoveryBinder(binder).bindSelector("hive-metastore");
+
+        binder.bind(TypeManager.class).toInstance(typeManager);
+
+        Multibinder<HiveRecordCursorProvider> recordCursorProviderBinder = Multibinder.newSetBinder(binder, HiveRecordCursorProvider.class);
+        recordCursorProviderBinder.addBinding().to(OrcRecordCursorProvider.class).in(Scopes.SINGLETON);
+        recordCursorProviderBinder.addBinding().to(ParquetRecordCursorProvider.class).in(Scopes.SINGLETON);
+        recordCursorProviderBinder.addBinding().to(DwrfRecordCursorProvider.class).in(Scopes.SINGLETON);
+        recordCursorProviderBinder.addBinding().to(ColumnarTextHiveRecordCursorProvider.class).in(Scopes.SINGLETON);
+        recordCursorProviderBinder.addBinding().to(ColumnarBinaryHiveRecordCursorProvider.class).in(Scopes.SINGLETON);
+        recordCursorProviderBinder.addBinding().to(GenericHiveRecordCursorProvider.class).in(Scopes.SINGLETON);
+
+        binder.bind(ConnectorPageSourceProvider.class).to(HivePageSourceProvider.class).in(Scopes.SINGLETON);
     }
 
     @ForHiveClient

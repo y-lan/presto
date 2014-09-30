@@ -15,12 +15,13 @@ package com.facebook.presto.server;
 
 import com.facebook.presto.OutputBuffers;
 import com.facebook.presto.ScheduledSplit;
+import com.facebook.presto.Session;
 import com.facebook.presto.TaskSource;
 import com.facebook.presto.client.PrestoHeaders;
 import com.facebook.presto.execution.BufferInfo;
 import com.facebook.presto.execution.ExecutionFailureInfo;
 import com.facebook.presto.execution.RemoteTask;
-import com.facebook.presto.execution.SharedBuffer.QueueState;
+import com.facebook.presto.execution.SharedBuffer.BufferState;
 import com.facebook.presto.execution.SharedBufferInfo;
 import com.facebook.presto.execution.StateMachine;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
@@ -30,7 +31,6 @@ import com.facebook.presto.execution.TaskState;
 import com.facebook.presto.metadata.Split;
 import com.facebook.presto.operator.TaskContext;
 import com.facebook.presto.operator.TaskStats;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
@@ -102,7 +102,7 @@ public class HttpRemoteTask
 
     private final TaskId taskId;
 
-    private final ConnectorSession session;
+    private final Session session;
     private final String nodeId;
     private final PlanFragment planFragment;
     private final int maxConsecutiveErrorCount;
@@ -140,7 +140,7 @@ public class HttpRemoteTask
 
     private final AtomicBoolean needsUpdate = new AtomicBoolean(true);
 
-    public HttpRemoteTask(ConnectorSession session,
+    public HttpRemoteTask(Session session,
             TaskId taskId,
             String nodeId,
             URI location,
@@ -183,10 +183,10 @@ public class HttpRemoteTask
                 pendingSplits.put(entry.getKey(), scheduledSplit);
             }
 
-            List<BufferInfo> bufferStates = ImmutableList.copyOf(transform(outputBuffers.getBuffers().keySet(), new Function<String, BufferInfo>()
+            List<BufferInfo> bufferStates = ImmutableList.copyOf(transform(outputBuffers.getBuffers().keySet(), new Function<TaskId, BufferInfo>()
             {
                 @Override
-                public BufferInfo apply(String outputId)
+                public BufferInfo apply(TaskId outputId)
                 {
                     return new BufferInfo(outputId, false, 0, 0);
                 }
@@ -200,7 +200,7 @@ public class HttpRemoteTask
                     TaskState.PLANNED,
                     location,
                     DateTime.now(),
-                    new SharedBufferInfo(QueueState.OPEN, 0, 0, bufferStates),
+                    new SharedBufferInfo(BufferState.OPEN, 0, 0, bufferStates),
                     ImmutableSet.<PlanNodeId>of(),
                     taskStats,
                     ImmutableList.<ExecutionFailureInfo>of()));
@@ -379,9 +379,11 @@ public class HttpRemoteTask
         currentRequest = future;
         currentRequestStartNanos = System.nanoTime();
 
-        Futures.addCallback(future, new SimpleHttpResponseHandler<>(new UpdateResponseHandler(sources), request.getUri()), executor);
-
+        // The needsUpdate flag needs to be set to false BEFORE adding the Future callback since callback might change the flag value
+        // and does so without grabbing the instance lock.
         needsUpdate.set(false);
+
+        Futures.addCallback(future, new SimpleHttpResponseHandler<>(new UpdateResponseHandler(sources), request.getUri()), executor);
     }
 
     private synchronized List<TaskSource> getSources()
@@ -733,7 +735,7 @@ public class HttpRemoteTask
                     callback.success(response.getValue());
                 }
                 else if (response.getStatusCode() == HttpStatus.SERVICE_UNAVAILABLE.code()) {
-                    callback.failed(new RuntimeException("Server at %s returned SERVICE_UNAVAILABLE"));
+                    callback.failed(new RuntimeException(format("Server at %s returned SERVICE_UNAVAILABLE", uri)));
                 }
                 else {
                     // Something is broken in the server or the client, so fail the task immediately (includes 500 errors)
@@ -743,11 +745,12 @@ public class HttpRemoteTask
                             cause = new PrestoException(REMOTE_TASK_ERROR.toErrorCode(), format("Expected response from %s is empty", uri));
                         }
                         else {
-                            cause = new PrestoException(REMOTE_TASK_ERROR.toErrorCode(), format("Expected response code from %s to be %s, but was %s: %s",
+                            cause = new PrestoException(REMOTE_TASK_ERROR.toErrorCode(), format("Expected response code from %s to be %s, but was %s: %s%n%s",
                                     uri,
                                     HttpStatus.OK.code(),
                                     response.getStatusCode(),
-                                    response.getStatusMessage()));
+                                    response.getStatusMessage(),
+                                    response.getResponseBody()));
                         }
                     }
                     callback.fatal(cause);

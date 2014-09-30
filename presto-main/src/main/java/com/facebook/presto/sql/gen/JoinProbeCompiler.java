@@ -15,13 +15,9 @@ package com.facebook.presto.sql.gen;
 
 import com.facebook.presto.byteCode.Block;
 import com.facebook.presto.byteCode.ClassDefinition;
-import com.facebook.presto.byteCode.ClassInfoLoader;
 import com.facebook.presto.byteCode.CompilerContext;
-import com.facebook.presto.byteCode.DumpByteCodeVisitor;
 import com.facebook.presto.byteCode.DynamicClassLoader;
 import com.facebook.presto.byteCode.FieldDefinition;
-import com.facebook.presto.byteCode.ParameterizedType;
-import com.facebook.presto.byteCode.SmartClassWriter;
 import com.facebook.presto.byteCode.control.IfStatement;
 import com.facebook.presto.byteCode.instruction.JumpInstruction;
 import com.facebook.presto.byteCode.instruction.LabelNode;
@@ -32,8 +28,8 @@ import com.facebook.presto.operator.LookupJoinOperatorFactory;
 import com.facebook.presto.operator.LookupSource;
 import com.facebook.presto.operator.LookupSourceSupplier;
 import com.facebook.presto.operator.OperatorFactory;
-import com.facebook.presto.operator.Page;
-import com.facebook.presto.operator.PageBuilder;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.type.Type;
 import com.google.common.annotations.VisibleForTesting;
@@ -43,53 +39,28 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
-import com.google.common.io.Files;
 import com.google.common.util.concurrent.ExecutionError;
 import com.google.common.util.concurrent.UncheckedExecutionException;
-import io.airlift.log.Logger;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.util.CheckClassAdapter;
-import org.objectweb.asm.util.TraceClassVisitor;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.byteCode.Access.FINAL;
 import static com.facebook.presto.byteCode.Access.PRIVATE;
 import static com.facebook.presto.byteCode.Access.PUBLIC;
-import static com.facebook.presto.byteCode.Access.STATIC;
-import static com.facebook.presto.byteCode.Access.VOLATILE;
 import static com.facebook.presto.byteCode.Access.a;
 import static com.facebook.presto.byteCode.NamedParameterDefinition.arg;
 import static com.facebook.presto.byteCode.ParameterizedType.type;
-import static com.facebook.presto.byteCode.ParameterizedType.typeFromPathName;
-import static com.facebook.presto.byteCode.expression.ByteCodeExpression.constantInt;
+import static com.facebook.presto.byteCode.expression.ByteCodeExpressions.constantInt;
 import static com.facebook.presto.sql.gen.Bootstrap.BOOTSTRAP_METHOD;
-import static com.facebook.presto.sql.gen.Bootstrap.CALL_SITES_FIELD_NAME;
+import static com.facebook.presto.sql.gen.CompilerUtils.defineClass;
+import static com.facebook.presto.sql.gen.CompilerUtils.makeClassName;
 import static com.facebook.presto.sql.gen.SqlTypeByteCodeExpression.constantType;
 
 public class JoinProbeCompiler
 {
-    private static final Logger log = Logger.get(ExpressionCompiler.class);
-
-    private static final AtomicLong CLASS_ID = new AtomicLong();
-
-    private static final boolean DUMP_BYTE_CODE_TREE = false;
-    private static final boolean DUMP_BYTE_CODE_RAW = false;
-    private static final boolean RUN_ASM_VERIFIER = false; // verifier doesn't work right now
-    private static final AtomicReference<String> DUMP_CLASS_FILES_TO = new AtomicReference<>();
-
     private final LoadingCache<JoinOperatorCacheKey, HashJoinOperatorFactoryFactory> joinProbeFactories = CacheBuilder.newBuilder().maximumSize(1000).build(
             new CacheLoader<JoinOperatorCacheKey, HashJoinOperatorFactoryFactory>()
             {
@@ -118,22 +89,15 @@ public class JoinProbeCompiler
 
     public HashJoinOperatorFactoryFactory internalCompileJoinOperatorFactory(List<Type> types, List<Integer> probeJoinChannel)
     {
-        DynamicClassLoader classLoader = new DynamicClassLoader(getClass().getClassLoader());
-        Class<? extends JoinProbe> joinProbeClass = compileJoinProbe(types, probeJoinChannel, classLoader);
+        Class<? extends JoinProbe> joinProbeClass = compileJoinProbe(types, probeJoinChannel);
 
         ClassDefinition classDefinition = new ClassDefinition(new CompilerContext(BOOTSTRAP_METHOD),
                 a(PUBLIC, FINAL),
-                typeFromPathName("JoinProbeFactory_" + CLASS_ID.incrementAndGet()),
+                makeClassName("JoinProbeFactory"),
                 type(Object.class),
                 type(JoinProbeFactory.class));
 
-        classDefinition.declareConstructor(new CompilerContext(BOOTSTRAP_METHOD),
-                a(PUBLIC))
-                .getBody()
-                .comment("super();")
-                .pushThis()
-                .invokeConstructor(Object.class)
-                .ret();
+        classDefinition.declareDefaultConstructor(a(PUBLIC));
 
         classDefinition.declareMethod(new CompilerContext(BOOTSTRAP_METHOD),
                 a(PUBLIC),
@@ -149,6 +113,7 @@ public class JoinProbeCompiler
                 .invokeConstructor(joinProbeClass, LookupSource.class, Page.class)
                 .retObject();
 
+        DynamicClassLoader classLoader = new DynamicClassLoader(joinProbeClass.getClassLoader());
         Class<? extends JoinProbeFactory> joinProbeFactoryClass = defineClass(classDefinition, JoinProbeFactory.class, classLoader);
         JoinProbeFactory joinProbeFactory;
         try {
@@ -170,25 +135,20 @@ public class JoinProbeCompiler
     @VisibleForTesting
     public JoinProbeFactory internalCompileJoinProbe(List<Type> types, List<Integer> probeChannels)
     {
-        DynamicClassLoader classLoader = new DynamicClassLoader(getClass().getClassLoader());
-
-        Class<? extends JoinProbe> joinProbeClass = compileJoinProbe(types, probeChannels, classLoader);
-
-        return new ReflectionJoinProbeFactory(joinProbeClass);
+        return new ReflectionJoinProbeFactory(compileJoinProbe(types, probeChannels));
     }
 
-    private Class<? extends JoinProbe> compileJoinProbe(List<Type> types, List<Integer> probeChannels, DynamicClassLoader classLoader)
+    private Class<? extends JoinProbe> compileJoinProbe(List<Type> types, List<Integer> probeChannels)
     {
         CallSiteBinder callSiteBinder = new CallSiteBinder();
 
         ClassDefinition classDefinition = new ClassDefinition(new CompilerContext(BOOTSTRAP_METHOD),
                 a(PUBLIC, FINAL),
-                typeFromPathName("JoinProbe_" + CLASS_ID.incrementAndGet()),
+                makeClassName("JoinProbe"),
                 type(Object.class),
                 type(JoinProbe.class));
 
         // declare fields
-        classDefinition.declareField(a(PRIVATE, STATIC, VOLATILE), CALL_SITES_FIELD_NAME, Map.class);
         FieldDefinition lookupSourceField = classDefinition.declareField(a(PRIVATE, FINAL), "lookupSource", LookupSource.class);
         FieldDefinition positionCountField = classDefinition.declareField(a(PRIVATE, FINAL), "positionCount", int.class);
         List<FieldDefinition> blockFields = new ArrayList<>();
@@ -211,9 +171,7 @@ public class JoinProbeCompiler
         generateGetCurrentJoinPosition(classDefinition, lookupSourceField, probeBlocksArrayField, positionField);
         generateCurrentRowContainsNull(classDefinition, probeBlockFields, positionField);
 
-        Class<? extends JoinProbe> joinProbeClass = defineClass(classDefinition, JoinProbe.class, classLoader);
-        ByteCodeUtils.setCallSitesField(joinProbeClass, callSiteBinder.getBindings());
-        return joinProbeClass;
+        return defineClass(classDefinition, JoinProbe.class, callSiteBinder.getBindings(), getClass().getClassLoader());
     }
 
     private void generateConstructor(ClassDefinition classDefinition,
@@ -421,58 +379,6 @@ public class JoinProbeCompiler
         }
     }
 
-    private static <T> Class<? extends T> defineClass(ClassDefinition classDefinition, Class<T> superType, DynamicClassLoader classLoader)
-    {
-        Class<?> clazz = defineClasses(ImmutableList.of(classDefinition), classLoader).values().iterator().next();
-        return clazz.asSubclass(superType);
-    }
-
-    private static Map<String, Class<?>> defineClasses(List<ClassDefinition> classDefinitions, DynamicClassLoader classLoader)
-    {
-        ClassInfoLoader classInfoLoader = ClassInfoLoader.createClassInfoLoader(classDefinitions, classLoader);
-
-        if (DUMP_BYTE_CODE_TREE) {
-            DumpByteCodeVisitor dumpByteCode = new DumpByteCodeVisitor(System.out);
-            for (ClassDefinition classDefinition : classDefinitions) {
-                dumpByteCode.visitClass(classDefinition);
-            }
-        }
-
-        Map<String, byte[]> byteCodes = new LinkedHashMap<>();
-        for (ClassDefinition classDefinition : classDefinitions) {
-            ClassWriter cw = new SmartClassWriter(classInfoLoader);
-            classDefinition.visit(cw);
-            byte[] byteCode = cw.toByteArray();
-            if (RUN_ASM_VERIFIER) {
-                ClassReader reader = new ClassReader(byteCode);
-                CheckClassAdapter.verify(reader, classLoader, true, new PrintWriter(System.out));
-            }
-            byteCodes.put(classDefinition.getType().getJavaClassName(), byteCode);
-        }
-
-        String dumpClassPath = DUMP_CLASS_FILES_TO.get();
-        if (dumpClassPath != null) {
-            for (Entry<String, byte[]> entry : byteCodes.entrySet()) {
-                File file = new File(dumpClassPath, ParameterizedType.typeFromJavaClassName(entry.getKey()).getClassName() + ".class");
-                try {
-                    log.debug("ClassFile: " + file.getAbsolutePath());
-                    Files.createParentDirs(file);
-                    Files.write(entry.getValue(), file);
-                }
-                catch (IOException e) {
-                    log.error(e, "Failed to write generated class file to: %s" + file.getAbsolutePath());
-                }
-            }
-        }
-        if (DUMP_BYTE_CODE_RAW) {
-            for (byte[] byteCode : byteCodes.values()) {
-                ClassReader classReader = new ClassReader(byteCode);
-                classReader.accept(new TraceClassVisitor(new PrintWriter(System.err)), ClassReader.SKIP_FRAMES);
-            }
-        }
-        return classLoader.defineClasses(byteCodes);
-    }
-
     private static final class JoinOperatorCacheKey
     {
         private final List<Type> types;
@@ -513,7 +419,7 @@ public class JoinProbeCompiler
             if (!(obj instanceof JoinOperatorCacheKey)) {
                 return false;
             }
-            final JoinOperatorCacheKey other = (JoinOperatorCacheKey) obj;
+            JoinOperatorCacheKey other = (JoinOperatorCacheKey) obj;
             return Objects.equal(this.types, other.types) &&
                     Objects.equal(this.probeChannels, other.probeChannels) &&
                     Objects.equal(this.enableOuterJoin, other.enableOuterJoin);

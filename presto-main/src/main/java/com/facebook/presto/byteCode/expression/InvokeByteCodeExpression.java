@@ -51,7 +51,7 @@ class InvokeByteCodeExpression
     private final String methodName;
     private final ParameterizedType returnType;
     private final List<ByteCodeExpression> parameters;
-    private final ImmutableList<ParameterizedType> parameterizedTypes;
+    private final ImmutableList<ParameterizedType> parameterTypes;
 
     public InvokeByteCodeExpression(
             @Nullable ByteCodeExpression instance,
@@ -62,12 +62,12 @@ class InvokeByteCodeExpression
             Iterable<? extends ByteCodeExpression> parameters)
     {
         super(checkNotNull(returnType, "returnType is null"));
-        checkArgument(instance == null || instance.getType().getPrimitiveType() == null, "Type %s does not have methods", getType());
+        checkArgument(instance == null || !instance.getType().isPrimitive(), "Type %s does not have methods", getType());
         this.instance = instance;
         this.methodTargetType = checkNotNull(methodTargetType, "methodTargetType is null");
         this.methodName = checkNotNull(methodName, "methodName is null");
         this.returnType = returnType;
-        this.parameterizedTypes = ImmutableList.copyOf(checkNotNull(parameterTypes, "parameterTypes is null"));
+        this.parameterTypes = ImmutableList.copyOf(checkNotNull(parameterTypes, "parameterTypes is null"));
         this.parameters = ImmutableList.copyOf(checkNotNull(parameters, "parameters is null"));
     }
 
@@ -84,18 +84,18 @@ class InvokeByteCodeExpression
         }
 
         if (instance == null) {
-            return block.invokeStatic(methodTargetType, methodName, returnType, parameterizedTypes);
+            return block.invokeStatic(methodTargetType, methodName, returnType, parameterTypes);
         }
         else if (instance.getType().isInterface()) {
-            return block.invokeInterface(methodTargetType, methodName, returnType, parameterizedTypes);
+            return block.invokeInterface(methodTargetType, methodName, returnType, parameterTypes);
         }
         else {
-            return block.invokeVirtual(methodTargetType, methodName, returnType, parameterizedTypes);
+            return block.invokeVirtual(methodTargetType, methodName, returnType, parameterTypes);
         }
     }
 
     @Override
-    public String toString()
+    protected String formatOneLine()
     {
         if (instance == null) {
             return methodTargetType.getSimpleName() + "." + methodName + "(" + Joiner.on(", ").join(parameters) + ")";

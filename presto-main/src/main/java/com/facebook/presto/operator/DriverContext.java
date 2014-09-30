@@ -13,8 +13,8 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.execution.TaskId;
-import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -99,7 +99,7 @@ public class DriverContext
         return pipelineContext;
     }
 
-    public ConnectorSession getSession()
+    public Session getSession()
     {
         return pipelineContext.getSession();
     }
@@ -307,6 +307,7 @@ public class DriverContext
     {
         return new Function<DriverContext, DriverStats>()
         {
+            @Override
             public DriverStats apply(DriverContext driverContext)
             {
                 return driverContext.getDriverStats();
@@ -317,5 +318,12 @@ public class DriverContext
     public boolean isPartitioned()
     {
         return partitioned;
+    }
+
+    // hack for index joins
+    @Deprecated
+    public Executor getExecutor()
+    {
+        return executor;
     }
 }

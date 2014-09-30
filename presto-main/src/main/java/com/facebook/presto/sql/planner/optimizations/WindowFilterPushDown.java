@@ -13,11 +13,9 @@
  */
 package com.facebook.presto.sql.planner.optimizations;
 
-import com.facebook.presto.metadata.Metadata;
+import com.facebook.presto.Session;
 import com.facebook.presto.metadata.Signature;
-import com.facebook.presto.operator.window.RowNumberFunction;
-import com.facebook.presto.operator.window.WindowFunction;
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.DependencyExtractor;
 import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
@@ -40,29 +38,24 @@ import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.Literal;
 import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.QualifiedNameReference;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 
 import java.util.Map;
 import java.util.Set;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.collect.Iterables.getOnlyElement;
 
 public class WindowFilterPushDown
         extends PlanOptimizer
 {
-    private final Metadata metadata;
-
-    public WindowFilterPushDown(Metadata metadata)
-    {
-        this.metadata = checkNotNull(metadata, "metadata is null");
-    }
+    private static final Signature ROW_NUMBER_SIGNATURE = new Signature("row_number", StandardTypes.BIGINT, ImmutableList.<String>of());
 
     @Override
-    public PlanNode optimize(PlanNode plan, ConnectorSession session, Map<Symbol, Type> types, SymbolAllocator symbolAllocator, PlanNodeIdAllocator idAllocator)
+    public PlanNode optimize(PlanNode plan, Session session, Map<Symbol, Type> types, SymbolAllocator symbolAllocator, PlanNodeIdAllocator idAllocator)
     {
         checkNotNull(plan, "plan is null");
         checkNotNull(session, "session is null");
@@ -70,7 +63,7 @@ public class WindowFilterPushDown
         checkNotNull(symbolAllocator, "symbolAllocator is null");
         checkNotNull(idAllocator, "idAllocator is null");
 
-        return PlanRewriter.rewriteWith(new Rewriter(idAllocator, metadata), plan, null);
+        return PlanRewriter.rewriteWith(new Rewriter(idAllocator), plan, null);
     }
 
     private static class WindowContext
@@ -99,11 +92,9 @@ public class WindowFilterPushDown
             extends PlanNodeRewriter<WindowContext>
     {
         private final PlanNodeIdAllocator idAllocator;
-        private final Metadata metadata;
 
-        private Rewriter(PlanNodeIdAllocator idAllocator, Metadata metadata)
+        private Rewriter(PlanNodeIdAllocator idAllocator)
         {
-            this.metadata = checkNotNull(metadata, "metadata is null");
             this.idAllocator = checkNotNull(idAllocator, "idAllocator is null");
         }
 
@@ -123,35 +114,33 @@ public class WindowFilterPushDown
                             node.getWindowFunctions(),
                             node.getSignatures());
                 }
-                else if (node.getOrderBy().isEmpty()) {
+                if (node.getOrderBy().isEmpty()) {
                     PlanNode rewrittenSource = planRewriter.rewrite(node.getSource(), null);
                     return new RowNumberLimitNode(idAllocator.getNextId(),
                             rewrittenSource,
                             node.getPartitionBy(),
-                            Iterables.getOnlyElement(node.getWindowFunctions().keySet()),
+                            getOnlyElement(node.getWindowFunctions().keySet()),
                             limit);
                 }
-                else {
-                    PlanNode rewrittenSource = planRewriter.rewrite(node.getSource(), null);
-                    return new TopNRowNumberNode(idAllocator.getNextId(),
-                            rewrittenSource,
-                            node.getPartitionBy(),
-                            node.getOrderBy(),
-                            node.getOrderings(),
-                            Iterables.getOnlyElement(node.getWindowFunctions().keySet()),
-                            limit);
-
-                }
+                PlanNode rewrittenSource = planRewriter.rewrite(node.getSource(), null);
+                return new TopNRowNumberNode(idAllocator.getNextId(),
+                        rewrittenSource,
+                        node.getPartitionBy(),
+                        node.getOrderBy(),
+                        node.getOrderings(),
+                        getOnlyElement(node.getWindowFunctions().keySet()),
+                        limit);
             }
             return planRewriter.defaultRewrite(node, null);
         }
 
-        private boolean canOptimizeWindowFunction(WindowNode node, WindowContext context)
+        private static boolean canOptimizeWindowFunction(WindowNode node, WindowContext context)
         {
             if (node.getWindowFunctions().size() != 1) {
                 return false;
             }
-            if (!isRowNumberFunction(node)) {
+            Symbol rowNumberSymbol = getOnlyElement(node.getWindowFunctions().entrySet()).getKey();
+            if (!isRowNumberSignature(node.getSignatures().get(rowNumberSymbol))) {
                 return false;
             }
 
@@ -161,15 +150,6 @@ public class WindowFilterPushDown
 
             Optional<Integer> limit = extractLimitOptional(node, context.getExpression());
             return limit.isPresent() && limit.get() < Integer.MAX_VALUE;
-        }
-
-        private boolean isRowNumberFunction(WindowNode node)
-        {
-            checkArgument(node.getWindowFunctions().size() == 1);
-            Symbol symbol = Iterables.getOnlyElement(node.getWindowFunctions().entrySet()).getKey();
-            Signature signature = node.getSignatures().get(symbol);
-            WindowFunction function = metadata.getExactFunction(signature).bindWindowFunction(ImmutableList.<Integer>of()).createWindowFunction();
-            return function instanceof RowNumberFunction;
         }
 
         private static boolean filterContainsWindowFunctions(WindowNode node, Expression filterPredicate)
@@ -207,15 +187,13 @@ public class WindowFilterPushDown
                 if (windowNode.getOrderBy().isEmpty()) {
                     return new LimitNode(idAllocator.getNextId(), rewrittenNode, ((LongLiteral) context.getExpression()).getValue());
                 }
-                else {
-                    return new TopNNode(
-                            idAllocator.getNextId(),
-                            rewrittenNode,
-                            ((LongLiteral) context.getExpression()).getValue(),
-                            windowNode.getOrderBy(),
-                            windowNode.getOrderings(),
-                            false);
-                }
+                return new TopNNode(
+                        idAllocator.getNextId(),
+                        rewrittenNode,
+                        ((LongLiteral) context.getExpression()).getValue(),
+                        windowNode.getOrderBy(),
+                        windowNode.getOrderings(),
+                        false);
             }
             return planRewriter.defaultRewrite(node, null);
         }
@@ -234,8 +212,14 @@ public class WindowFilterPushDown
 
     private static Optional<Integer> extractLimitOptional(WindowNode node, Expression filterPredicate)
     {
-        Symbol rowNumberSymbol = Iterables.getOnlyElement(node.getWindowFunctions().entrySet()).getKey();
+        Symbol rowNumberSymbol = getOnlyElement(node.getWindowFunctions().entrySet()).getKey();
         return WindowLimitExtractor.extract(filterPredicate, rowNumberSymbol);
+    }
+
+    @VisibleForTesting
+    static boolean isRowNumberSignature(Signature signature)
+    {
+        return signature.equals(ROW_NUMBER_SIGNATURE);
     }
 
     public static final class WindowLimitExtractor
@@ -246,14 +230,11 @@ public class WindowFilterPushDown
         {
             Visitor visitor = new Visitor();
             Long limit = visitor.process(expression, rowNumberSymbol);
-            if (limit == null) {
+            if (limit == null || limit >= Integer.MAX_VALUE) {
                 return Optional.absent();
             }
-            else {
-                checkArgument(limit < Integer.MAX_VALUE, "filter on row_number greater than allowed value");
 
-                return Optional.of(limit.intValue());
-            }
+            return Optional.of(limit.intValue());
         }
 
         private static class Visitor
@@ -272,7 +253,7 @@ public class WindowFilterPushDown
                     if (node.getType() == ComparisonExpression.Type.LESS_THAN_OR_EQUAL) {
                         return extractValue(literal);
                     }
-                    else if (node.getType() == ComparisonExpression.Type.LESS_THAN) {
+                    if (node.getType() == ComparisonExpression.Type.LESS_THAN) {
                         return extractValue(literal) - 1;
                     }
                 }
@@ -280,7 +261,7 @@ public class WindowFilterPushDown
                     if (node.getType() == ComparisonExpression.Type.GREATER_THAN_OR_EQUAL) {
                         return extractValue(literal);
                     }
-                    else if (node.getType() == ComparisonExpression.Type.GREATER_THAN) {
+                    if (node.getType() == ComparisonExpression.Type.GREATER_THAN) {
                         return extractValue(literal) - 1;
                     }
                 }
@@ -293,7 +274,7 @@ public class WindowFilterPushDown
             if (expression.getLeft() instanceof QualifiedNameReference) {
                 return (QualifiedNameReference) expression.getLeft();
             }
-            else if (expression.getRight() instanceof QualifiedNameReference) {
+            if (expression.getRight() instanceof QualifiedNameReference) {
                 return (QualifiedNameReference) expression.getRight();
             }
             throw new IllegalArgumentException("Comparison does not have a child of type QualifiedNameReference");
@@ -304,7 +285,7 @@ public class WindowFilterPushDown
             if (expression.getLeft() instanceof Literal) {
                 return (Literal) expression.getLeft();
             }
-            else if (expression.getRight() instanceof Literal) {
+            if (expression.getRight() instanceof Literal) {
                 return (Literal) expression.getRight();
             }
             throw new IllegalArgumentException("Comparison does not have a child of type Literal");

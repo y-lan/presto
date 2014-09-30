@@ -13,13 +13,13 @@
  */
 package com.facebook.presto.benchmark;
 
+import com.facebook.presto.Session;
 import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.execution.TaskStateMachine;
 import com.facebook.presto.operator.Driver;
 import com.facebook.presto.operator.OperatorFactory;
 import com.facebook.presto.operator.TaskContext;
 import com.facebook.presto.operator.TaskStats;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.testing.LocalQueryRunner;
 import com.facebook.presto.util.CpuTimer;
 import com.facebook.presto.util.CpuTimer.CpuDuration;
@@ -27,7 +27,6 @@ import com.google.common.collect.ImmutableMap;
 import io.airlift.units.DataSize;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
@@ -35,6 +34,7 @@ import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static io.airlift.units.DataSize.Unit.BYTE;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
+import static java.util.Locale.ENGLISH;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -83,7 +83,14 @@ public abstract class AbstractOperatorBenchmark
     @Override
     protected Map<String, Long> runOnce()
     {
-        ConnectorSession session = new ConnectorSession("user", "source", "catalog", "schema", UTC_KEY, Locale.ENGLISH, "address", "agent");
+        Session session = Session.builder()
+                .setUser("user")
+                .setSource("source")
+                .setCatalog("catalog")
+                .setSchema("schema")
+                .setTimeZoneKey(UTC_KEY)
+                .setLocale(ENGLISH)
+                .build();
         ExecutorService executor = localQueryRunner.getExecutor();
         TaskContext taskContext = new TaskContext(
                 new TaskStateMachine(new TaskId("query", "stage", "task"), executor),

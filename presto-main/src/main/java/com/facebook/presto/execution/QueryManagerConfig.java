@@ -25,7 +25,8 @@ import java.util.concurrent.TimeUnit;
 public class QueryManagerConfig
 {
     private int scheduleSplitBatchSize = 1000;
-
+    private int maxConcurrentQueries = 1000;
+    private int maxQueuedQueries = 5000;
     private int maxPendingSplitsPerNode = 100;
 
     private int initialHashPartitions = 8;
@@ -37,6 +38,7 @@ public class QueryManagerConfig
 
     private int remoteTaskMaxConsecutiveErrorCount = 10;
     private Duration remoteTaskMinErrorDuration = new Duration(2, TimeUnit.MINUTES);
+    private int remoteTaskMaxCallbackThreads = 1000;
 
     @Min(1)
     public int getScheduleSplitBatchSize()
@@ -48,6 +50,32 @@ public class QueryManagerConfig
     public QueryManagerConfig setScheduleSplitBatchSize(int scheduleSplitBatchSize)
     {
         this.scheduleSplitBatchSize = scheduleSplitBatchSize;
+        return this;
+    }
+
+    @Min(1)
+    public int getMaxConcurrentQueries()
+    {
+        return maxConcurrentQueries;
+    }
+
+    @Config("query.max-concurrent-queries")
+    public QueryManagerConfig setMaxConcurrentQueries(int maxConcurrentQueries)
+    {
+        this.maxConcurrentQueries = maxConcurrentQueries;
+        return this;
+    }
+
+    @Min(1)
+    public int getMaxQueuedQueries()
+    {
+        return maxQueuedQueries;
+    }
+
+    @Config("query.max-queued-queries")
+    public QueryManagerConfig setMaxQueuedQueries(int maxQueuedQueries)
+    {
+        this.maxQueuedQueries = maxQueuedQueries;
         return this;
     }
 
@@ -153,6 +181,19 @@ public class QueryManagerConfig
     public QueryManagerConfig setRemoteTaskMinErrorDuration(Duration remoteTaskMinErrorDuration)
     {
         this.remoteTaskMinErrorDuration = remoteTaskMinErrorDuration;
+        return this;
+    }
+
+    @Min(1)
+    public int getRemoteTaskMaxCallbackThreads()
+    {
+        return remoteTaskMaxCallbackThreads;
+    }
+
+    @Config("query.remote-task.max-callback-threads")
+    public QueryManagerConfig setRemoteTaskMaxCallbackThreads(int remoteTaskMaxCallbackThreads)
+    {
+        this.remoteTaskMaxCallbackThreads = remoteTaskMaxCallbackThreads;
         return this;
     }
 }

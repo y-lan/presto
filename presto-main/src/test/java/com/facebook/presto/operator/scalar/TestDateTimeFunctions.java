@@ -13,7 +13,7 @@
  */
 package com.facebook.presto.operator.scalar;
 
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.Session;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.type.SqlDate;
 import com.facebook.presto.spi.type.SqlTime;
@@ -34,6 +34,7 @@ import java.util.TimeZone;
 import static com.facebook.presto.spi.type.TimeZoneKey.getTimeZoneKey;
 import static com.facebook.presto.spi.type.TimeZoneKey.getTimeZoneKeyForOffset;
 import static com.facebook.presto.util.DateTimeZoneIndex.getDateTimeZone;
+import static java.util.Locale.ENGLISH;
 import static org.joda.time.Days.daysBetween;
 import static org.joda.time.Hours.hoursBetween;
 import static org.joda.time.Minutes.minutesBetween;
@@ -63,13 +64,20 @@ public class TestDateTimeFunctions
     private static final String WEIRD_TIMESTAMP_LITERAL = "TIMESTAMP '2001-08-22 03:04:05.321 +07:09'";
 
     private static final TimeZoneKey WEIRD_TIME_ZONE_KEY = getTimeZoneKeyForOffset(7 * 60 + 9);
-    private ConnectorSession session;
+    private Session session;
     private FunctionAssertions functionAssertions;
 
     @BeforeClass
     public void setUp()
     {
-        session = new ConnectorSession("user", "test", "catalog", "schema", TIME_ZONE_KEY, Locale.ENGLISH, null, null);
+        session = Session.builder()
+                .setUser("user")
+                .setSource("test")
+                .setCatalog("catalog")
+                .setSchema("schema")
+                .setTimeZoneKey(TIME_ZONE_KEY)
+                .setLocale(ENGLISH)
+                .build();
         functionAssertions = new FunctionAssertions(session);
     }
 
@@ -620,7 +628,14 @@ public class TestDateTimeFunctions
     public void testLocale()
     {
         Locale locale = Locale.JAPANESE;
-        ConnectorSession localeSession = new ConnectorSession("user", "test", "catalog", "schema", TIME_ZONE_KEY, locale, null, null);
+        Session localeSession = Session.builder()
+                .setUser("user")
+                .setSource("test")
+                .setCatalog("catalog")
+                .setSchema("schema")
+                .setTimeZoneKey(TIME_ZONE_KEY)
+                .setLocale(locale)
+                .build();
 
         FunctionAssertions localeAssertions = new FunctionAssertions(localeSession);
 
@@ -688,9 +703,9 @@ public class TestDateTimeFunctions
         return new SqlTimestamp(dateTime.getMillis(), session.getTimeZoneKey());
     }
 
-    private SqlTimestamp toTimestamp(DateTime dateTime, ConnectorSession connectorSession)
+    private SqlTimestamp toTimestamp(DateTime dateTime, Session session)
     {
-        return new SqlTimestamp(dateTime.getMillis(), connectorSession.getTimeZoneKey());
+        return new SqlTimestamp(dateTime.getMillis(), session.getTimeZoneKey());
     }
 
     private SqlTimestampWithTimeZone toTimestampWithTimeZone(DateTime dateTime)

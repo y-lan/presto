@@ -16,15 +16,11 @@ package com.facebook.presto.sql.gen;
 import com.facebook.presto.byteCode.Block;
 import com.facebook.presto.byteCode.ByteCodeNode;
 import com.facebook.presto.byteCode.ClassDefinition;
-import com.facebook.presto.byteCode.ClassInfoLoader;
 import com.facebook.presto.byteCode.CompilerContext;
-import com.facebook.presto.byteCode.DumpByteCodeVisitor;
 import com.facebook.presto.byteCode.DynamicClassLoader;
 import com.facebook.presto.byteCode.FieldDefinition;
 import com.facebook.presto.byteCode.MethodDefinition;
-import com.facebook.presto.byteCode.OpCodes;
-import com.facebook.presto.byteCode.ParameterizedType;
-import com.facebook.presto.byteCode.SmartClassWriter;
+import com.facebook.presto.byteCode.OpCode;
 import com.facebook.presto.byteCode.Variable;
 import com.facebook.presto.byteCode.control.IfStatement.IfStatementBuilder;
 import com.facebook.presto.byteCode.expression.ByteCodeExpression;
@@ -32,125 +28,105 @@ import com.facebook.presto.byteCode.instruction.LabelNode;
 import com.facebook.presto.operator.InMemoryJoinHash;
 import com.facebook.presto.operator.LookupSource;
 import com.facebook.presto.operator.OperatorContext;
-import com.facebook.presto.operator.PageBuilder;
+import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.operator.PagesHashStrategy;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
 import com.google.common.base.Throwables;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
-import com.google.common.io.Files;
 import com.google.common.util.concurrent.ExecutionError;
 import com.google.common.util.concurrent.UncheckedExecutionException;
-import io.airlift.log.Logger;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.util.CheckClassAdapter;
-import org.objectweb.asm.util.TraceClassVisitor;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.byteCode.Access.FINAL;
 import static com.facebook.presto.byteCode.Access.PRIVATE;
 import static com.facebook.presto.byteCode.Access.PUBLIC;
-import static com.facebook.presto.byteCode.Access.STATIC;
-import static com.facebook.presto.byteCode.Access.VOLATILE;
 import static com.facebook.presto.byteCode.Access.a;
 import static com.facebook.presto.byteCode.NamedParameterDefinition.arg;
 import static com.facebook.presto.byteCode.ParameterizedType.type;
-import static com.facebook.presto.byteCode.ParameterizedType.typeFromPathName;
-import static com.facebook.presto.byteCode.expression.ByteCodeExpression.constantInt;
+import static com.facebook.presto.byteCode.expression.ByteCodeExpressions.constantInt;
 import static com.facebook.presto.sql.gen.Bootstrap.BOOTSTRAP_METHOD;
-import static com.facebook.presto.sql.gen.Bootstrap.CALL_SITES_FIELD_NAME;
-import static com.facebook.presto.sql.gen.ByteCodeUtils.setCallSitesField;
+import static com.facebook.presto.sql.gen.CompilerUtils.defineClass;
+import static com.facebook.presto.sql.gen.CompilerUtils.makeClassName;
 import static com.facebook.presto.sql.gen.SqlTypeByteCodeExpression.constantType;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class JoinCompiler
 {
-    private static final Logger log = Logger.get(ExpressionCompiler.class);
-
-    private static final AtomicLong CLASS_ID = new AtomicLong();
-
-    private static final boolean DUMP_BYTE_CODE_TREE = false;
-    private static final boolean DUMP_BYTE_CODE_RAW = false;
-    private static final boolean RUN_ASM_VERIFIER = false; // verifier doesn't work right now
-    private static final AtomicReference<String> DUMP_CLASS_FILES_TO = new AtomicReference<>();
-
-    private final LoadingCache<LookupSourceCacheKey, LookupSourceFactory> lookupSourceFactories = CacheBuilder.newBuilder().maximumSize(1000).build(
-            new CacheLoader<LookupSourceCacheKey, LookupSourceFactory>()
+    private final LoadingCache<CacheKey, LookupSourceFactory> lookupSourceFactories = CacheBuilder.newBuilder().maximumSize(1000).build(
+            new CacheLoader<CacheKey, LookupSourceFactory>()
             {
                 @Override
-                public LookupSourceFactory load(LookupSourceCacheKey key)
+                public LookupSourceFactory load(CacheKey key)
                         throws Exception
                 {
                     return internalCompileLookupSourceFactory(key.getTypes(), key.getJoinChannels());
                 }
             });
 
+    private final LoadingCache<CacheKey, Class<? extends PagesHashStrategy>> hashStrategies = CacheBuilder.newBuilder().maximumSize(1000).build(
+            new CacheLoader<CacheKey, Class<? extends PagesHashStrategy>>() {
+                @Override
+                public Class<? extends PagesHashStrategy> load(CacheKey key)
+                        throws Exception
+                {
+                    return internalCompileHashStrategy(key.getTypes(), key.getJoinChannels());
+                }
+            });
+
     public LookupSourceFactory compileLookupSourceFactory(List<? extends Type> types, List<Integer> joinChannels)
     {
         try {
-            return lookupSourceFactories.get(new LookupSourceCacheKey(types, joinChannels));
+            return lookupSourceFactories.get(new CacheKey(types, joinChannels));
         }
         catch (ExecutionException | UncheckedExecutionException | ExecutionError e) {
             throw Throwables.propagate(e.getCause());
         }
     }
 
-    @VisibleForTesting
-    public LookupSourceFactory internalCompileLookupSourceFactory(List<Type> types, List<Integer> joinChannels)
+    public PagesHashStrategyFactory compilePagesHashStrategyFactory(List<Type> types, List<Integer> joinChannels)
     {
-        DynamicClassLoader classLoader = new DynamicClassLoader(getClass().getClassLoader());
+        checkNotNull(types, "types is null");
+        checkNotNull(joinChannels, "joinChannels is null");
 
-        Class<? extends PagesHashStrategy> pagesHashStrategyClass = compilePagesHashStrategy(types, joinChannels, classLoader);
+        try {
+            return new PagesHashStrategyFactory(hashStrategies.get(new CacheKey(types, joinChannels)));
+        }
+        catch (ExecutionException | UncheckedExecutionException | ExecutionError e) {
+            throw Throwables.propagate(e.getCause());
+        }
+    }
+
+    private LookupSourceFactory internalCompileLookupSourceFactory(List<Type> types, List<Integer> joinChannels)
+    {
+        Class<? extends PagesHashStrategy> pagesHashStrategyClass = internalCompileHashStrategy(types, joinChannels);
 
         Class<? extends LookupSource> lookupSourceClass = IsolatedClass.isolateClass(
-                classLoader,
+                new DynamicClassLoader(getClass().getClassLoader()),
                 LookupSource.class,
                 InMemoryJoinHash.class);
 
         return new LookupSourceFactory(lookupSourceClass, new PagesHashStrategyFactory(pagesHashStrategyClass));
     }
 
-    @VisibleForTesting
-    public PagesHashStrategyFactory compilePagesHashStrategy(List<Type> types, List<Integer> joinChannels)
-    {
-        DynamicClassLoader classLoader = new DynamicClassLoader(getClass().getClassLoader());
-
-        Class<? extends PagesHashStrategy> pagesHashStrategyClass = compilePagesHashStrategy(types, joinChannels, classLoader);
-
-        return new PagesHashStrategyFactory(pagesHashStrategyClass);
-    }
-
-    private Class<? extends PagesHashStrategy> compilePagesHashStrategy(List<Type> types, List<Integer> joinChannels, DynamicClassLoader classLoader)
+    private Class<? extends PagesHashStrategy> internalCompileHashStrategy(List<Type> types, List<Integer> joinChannels)
     {
         CallSiteBinder callSiteBinder = new CallSiteBinder();
 
         ClassDefinition classDefinition = new ClassDefinition(new CompilerContext(BOOTSTRAP_METHOD),
                 a(PUBLIC, FINAL),
-                typeFromPathName("PagesHashStrategy_" + CLASS_ID.incrementAndGet()),
+                makeClassName("PagesHashStrategy"),
                 type(Object.class),
                 type(PagesHashStrategy.class));
-
-        // declare fields
-        classDefinition.declareField(a(PRIVATE, STATIC, VOLATILE), CALL_SITES_FIELD_NAME, Map.class);
 
         List<FieldDefinition> channelFields = new ArrayList<>();
         for (int i = 0; i < types.size(); i++) {
@@ -173,9 +149,7 @@ public class JoinCompiler
         generatePositionEqualsRowMethod(classDefinition, callSiteBinder, joinChannelTypes, joinChannelFields);
         generatePositionEqualsPositionMethod(classDefinition, callSiteBinder, joinChannelTypes, joinChannelFields);
 
-        Class<? extends PagesHashStrategy> pagesHashStrategyClass = defineClass(classDefinition, PagesHashStrategy.class, classLoader);
-        setCallSitesField(pagesHashStrategyClass, callSiteBinder.getBindings());
-        return pagesHashStrategyClass;
+        return defineClass(classDefinition, PagesHashStrategy.class, callSiteBinder.getBindings(), getClass().getClassLoader());
     }
 
     private void generateConstructor(ClassDefinition classDefinition,
@@ -255,9 +229,9 @@ public class JoinCompiler
                     .getVariable("pageBuilder")
                     .getVariable("outputChannelOffset")
                     .push(index)
-                    .append(OpCodes.IADD)
+                    .append(OpCode.IADD)
                     .invokeVirtual(PageBuilder.class, "getBlockBuilder", BlockBuilder.class, int.class)
-                    .invokeVirtual(type.getClass(), "appendTo", void.class, com.facebook.presto.spi.block.Block.class, int.class, BlockBuilder.class);
+                    .invokeInterface(Type.class, "appendTo", void.class, com.facebook.presto.spi.block.Block.class, int.class, BlockBuilder.class);
         }
         appendToBody.ret();
     }
@@ -288,9 +262,9 @@ public class JoinCompiler
                     .getBody()
                     .getVariable(resultVariable)
                     .push(31)
-                    .append(OpCodes.IMUL)
+                    .append(OpCode.IMUL)
                     .append(typeHashCode(compilerContext, type, block, compilerContext.getVariable("blockPosition")))
-                    .append(OpCodes.IADD)
+                    .append(OpCode.IADD)
                     .putVariable(resultVariable);
         }
 
@@ -325,9 +299,9 @@ public class JoinCompiler
                     .getBody()
                     .getVariable(resultVariable)
                     .push(31)
-                    .append(OpCodes.IMUL)
+                    .append(OpCode.IMUL)
                     .append(typeHashCode(compilerContext, type, block, compilerContext.getVariable("position")))
-                    .append(OpCodes.IADD)
+                    .append(OpCode.IADD)
                     .putVariable(resultVariable);
         }
 
@@ -465,12 +439,12 @@ public class JoinCompiler
         ifStatementBuilder.condition(new Block(compilerContext)
                 .append(leftBlock.invoke("isNull", boolean.class, leftBlockPosition))
                 .append(rightBlock.invoke("isNull", boolean.class, rightBlockPosition))
-                .append(OpCodes.IOR));
+                .append(OpCode.IOR));
 
         ifStatementBuilder.ifTrue(new Block(compilerContext)
                 .append(leftBlock.invoke("isNull", boolean.class, leftBlockPosition))
                 .append(rightBlock.invoke("isNull", boolean.class, rightBlockPosition))
-                .append(OpCodes.IAND));
+                .append(OpCode.IAND));
 
         ifStatementBuilder.ifFalse(new Block(compilerContext).append(type.invoke("equalTo", boolean.class, leftBlock, leftBlockPosition, rightBlock, rightBlockPosition)));
 
@@ -530,64 +504,12 @@ public class JoinCompiler
         }
     }
 
-    private static <T> Class<? extends T> defineClass(ClassDefinition classDefinition, Class<T> superType, DynamicClassLoader classLoader)
-    {
-        Class<?> clazz = defineClasses(ImmutableList.of(classDefinition), classLoader).values().iterator().next();
-        return clazz.asSubclass(superType);
-    }
-
-    private static Map<String, Class<?>> defineClasses(List<ClassDefinition> classDefinitions, DynamicClassLoader classLoader)
-    {
-        ClassInfoLoader classInfoLoader = ClassInfoLoader.createClassInfoLoader(classDefinitions, classLoader);
-
-        if (DUMP_BYTE_CODE_TREE) {
-            DumpByteCodeVisitor dumpByteCode = new DumpByteCodeVisitor(System.out);
-            for (ClassDefinition classDefinition : classDefinitions) {
-                dumpByteCode.visitClass(classDefinition);
-            }
-        }
-
-        Map<String, byte[]> byteCodes = new LinkedHashMap<>();
-        for (ClassDefinition classDefinition : classDefinitions) {
-            ClassWriter cw = new SmartClassWriter(classInfoLoader);
-            classDefinition.visit(cw);
-            byte[] byteCode = cw.toByteArray();
-            if (RUN_ASM_VERIFIER) {
-                ClassReader reader = new ClassReader(byteCode);
-                CheckClassAdapter.verify(reader, classLoader, true, new PrintWriter(System.out));
-            }
-            byteCodes.put(classDefinition.getType().getJavaClassName(), byteCode);
-        }
-
-        String dumpClassPath = DUMP_CLASS_FILES_TO.get();
-        if (dumpClassPath != null) {
-            for (Entry<String, byte[]> entry : byteCodes.entrySet()) {
-                File file = new File(dumpClassPath, ParameterizedType.typeFromJavaClassName(entry.getKey()).getClassName() + ".class");
-                try {
-                    log.debug("ClassFile: " + file.getAbsolutePath());
-                    Files.createParentDirs(file);
-                    Files.write(entry.getValue(), file);
-                }
-                catch (IOException e) {
-                    log.error(e, "Failed to write generated class file to: %s" + file.getAbsolutePath());
-                }
-            }
-        }
-        if (DUMP_BYTE_CODE_RAW) {
-            for (byte[] byteCode : byteCodes.values()) {
-                ClassReader classReader = new ClassReader(byteCode);
-                classReader.accept(new TraceClassVisitor(new PrintWriter(System.err)), ClassReader.SKIP_FRAMES);
-            }
-        }
-        return classLoader.defineClasses(byteCodes);
-    }
-
-    private static final class LookupSourceCacheKey
+    private static final class CacheKey
     {
         private final List<Type> types;
         private final List<Integer> joinChannels;
 
-        private LookupSourceCacheKey(List<? extends Type> types, List<Integer> joinChannels)
+        private CacheKey(List<? extends Type> types, List<Integer> joinChannels)
         {
             this.types = ImmutableList.copyOf(checkNotNull(types, "types is null"));
             this.joinChannels = ImmutableList.copyOf(checkNotNull(joinChannels, "joinChannels is null"));
@@ -615,10 +537,10 @@ public class JoinCompiler
             if (this == obj) {
                 return true;
             }
-            if (!(obj instanceof LookupSourceCacheKey)) {
+            if (!(obj instanceof CacheKey)) {
                 return false;
             }
-            final LookupSourceCacheKey other = (LookupSourceCacheKey) obj;
+            CacheKey other = (CacheKey) obj;
             return Objects.equal(this.types, other.types) &&
                     Objects.equal(this.joinChannels, other.joinChannels);
         }
