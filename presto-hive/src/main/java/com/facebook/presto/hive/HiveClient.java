@@ -1157,7 +1157,7 @@ public class HiveClient
                             for (int i = 0; i < min(partitionColumns.size(), tableColumns.size()); i++) {
                                 String tableType = tableColumns.get(i).getType();
                                 String partitionType = partitionColumns.get(i).getType();
-                                if (!tableType.equals(partitionType)) {
+                                if (!tableType.equals(partitionType) && !isTypeChangeAcceptable(tableType, partitionType)) {
                                     throw new PrestoException(HIVE_PARTITION_SCHEMA_MISMATCH.toErrorCode(), format(
                                             "Table '%s' partition '%s' column '%s' type '%s' does not match table column type '%s'",
                                             tableName,
@@ -1430,5 +1430,15 @@ public class HiveClient
                 };
             }
         };
+    }
+
+    private boolean isTypeChangeAcceptable(String tableType, String partitionType)
+    {
+        String structPrefix = "struct<";
+        if (tableType.startsWith(structPrefix) && partitionType.startsWith(structPrefix)) {
+            int commonLength = Math.min(tableType.length(), partitionType.length()) - 1;
+            return tableType.substring(0, commonLength).equals(partitionType.substring(0, commonLength));
+        }
+        return false;
     }
 }
