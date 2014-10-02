@@ -70,6 +70,9 @@ public final class DateTimeFunctions
     private static final int MILLISECONDS_IN_MINUTE = 60 * MILLISECONDS_IN_SECOND;
     private static final int MILLISECONDS_IN_HOUR = 60 * MILLISECONDS_IN_MINUTE;
     private static final int MILLISECONDS_IN_DAY = 24 * MILLISECONDS_IN_HOUR;
+    private static final Slice DATEFORMAT_A = Slices.utf8Slice("%Y-%m-%d");
+    private static final Slice DELIMITER_A = Slices.utf8Slice("-");
+    private static final Slice DATEFORMAT_B = Slices.utf8Slice("%Y%m%d");
 
     private DateTimeFunctions() {}
 
@@ -119,6 +122,61 @@ public final class DateTimeFunctions
     public static long localTimestamp(ConnectorSession session)
     {
         return session.getStartTime();
+    }
+
+    private static Slice formatRelativeDate(ConnectorSession session, long offset, Slice delim)
+    {
+        long startTime = session.getStartTime();
+        if (offset != 0) {
+            startTime = startTime + offset * 86400000l;
+        }
+
+        if (delim.equals(Slices.EMPTY_SLICE)) {
+            return dateFormat(getChronology(session.getTimeZoneKey()),
+                    session.getLocale(), startTime, DATEFORMAT_B);
+        }
+        else if (delim.equals(DELIMITER_A)) {
+            return dateFormat(getChronology(session.getTimeZoneKey()),
+                    session.getLocale(), startTime, DATEFORMAT_A);
+        }
+        else {
+            String s = delim.toStringUtf8();
+            Slice format = Slices.utf8Slice(String.format("%%Y%s%%m%s%%d", s, s));
+            return dateFormat(getChronology(session.getTimeZoneKey()),
+                    session.getLocale(), startTime, format);
+        }
+    }
+
+    @Description("current date")
+    @ScalarFunction
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice queryDt(ConnectorSession session)
+    {
+        return formatRelativeDate(session, 0, Slices.EMPTY_SLICE);
+    }
+
+    @Description("current date with delimiter specified")
+    @ScalarFunction
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice queryDt(ConnectorSession session, @SqlType(StandardTypes.VARCHAR) Slice delim)
+    {
+        return formatRelativeDate(session, 0, delim);
+    }
+
+    @Description("current date with offset")
+    @ScalarFunction
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice queryDt(ConnectorSession session, @SqlType(StandardTypes.BIGINT) long offset)
+    {
+        return formatRelativeDate(session, offset, Slices.EMPTY_SLICE);
+    }
+
+    @Description("current date with offset & delimiter specified")
+    @ScalarFunction
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice queryDt(ConnectorSession session, @SqlType(StandardTypes.BIGINT) long offset, @SqlType(StandardTypes.VARCHAR) Slice delim)
+    {
+        return formatRelativeDate(session, offset, delim);
     }
 
     @ScalarFunction("from_unixtime")
