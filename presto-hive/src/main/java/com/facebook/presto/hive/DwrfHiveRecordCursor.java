@@ -39,6 +39,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
+import org.joda.time.format.ISODateTimeFormat;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -60,12 +61,14 @@ import static com.facebook.presto.hive.HiveType.HIVE_SHORT;
 import static com.facebook.presto.hive.HiveType.HIVE_STRING;
 import static com.facebook.presto.hive.HiveType.HIVE_TIMESTAMP;
 import static com.facebook.presto.hive.HiveUtil.getTableObjectInspector;
+import static com.facebook.presto.hive.HiveUtil.parseHiveTimestamp;
 import static com.facebook.presto.hive.NumberParser.parseDouble;
 import static com.facebook.presto.hive.NumberParser.parseLong;
 import static com.facebook.presto.hive.util.SerDeUtils.getJsonBytes;
 import static com.facebook.presto.hive.util.Types.checkType;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
@@ -181,7 +184,11 @@ class DwrfHiveRecordCursor
 
                 byte[] bytes = partitionKey.getValue().getBytes(Charsets.UTF_8);
 
-                if (types[columnIndex].equals(BOOLEAN)) {
+                Type type = types[columnIndex];
+                if (HiveUtil.isHiveNull(bytes)) {
+                    nulls[columnIndex] = true;
+                }
+                else if (BOOLEAN.equals(type)) {
                     if (isTrue(bytes, 0, bytes.length)) {
                         booleans[columnIndex] = true;
                     }
@@ -193,23 +200,29 @@ class DwrfHiveRecordCursor
                         throw new IllegalArgumentException(String.format("Invalid partition value '%s' for BOOLEAN partition key %s", valueString, names[columnIndex]));
                     }
                 }
-                else if (types[columnIndex].equals(BIGINT)) {
+                else if (BIGINT.equals(type)) {
                     if (bytes.length == 0) {
                         throw new IllegalArgumentException(String.format("Invalid partition value '' for BIGINT partition key %s", names[columnIndex]));
                     }
                     longs[columnIndex] = parseLong(bytes, 0, bytes.length);
                 }
-                else if (types[columnIndex].equals(DOUBLE)) {
+                else if (DOUBLE.equals(type)) {
                     if (bytes.length == 0) {
                         throw new IllegalArgumentException(String.format("Invalid partition value '' for DOUBLE partition key %s", names[columnIndex]));
                     }
                     doubles[columnIndex] = parseDouble(bytes, 0, bytes.length);
                 }
-                else if (types[columnIndex].equals(VARCHAR)) {
-                    slices[columnIndex] = Slices.wrappedBuffer(bytes);
+                else if (VARCHAR.equals(type)) {
+                    slices[columnIndex] = Slices.wrappedBuffer(Arrays.copyOf(bytes, bytes.length));
+                }
+                else if (DATE.equals(type)) {
+                    longs[columnIndex] = ISODateTimeFormat.date().withZone(DateTimeZone.UTC).parseMillis(partitionKey.getValue());
+                }
+                else if (TIMESTAMP.equals(type)) {
+                    longs[columnIndex] = parseHiveTimestamp(partitionKey.getValue(), hiveStorageTimeZone);
                 }
                 else {
-                    throw new UnsupportedOperationException("Unsupported column type: " + types[columnIndex]);
+                    throw new UnsupportedOperationException("Unsupported column type: " + type);
                 }
             }
         }
@@ -260,10 +273,6 @@ class DwrfHiveRecordCursor
             // reset loaded flags
             // partition keys are already loaded, but everything else is not
             System.arraycopy(isPartitionColumn, 0, loaded, 0, isPartitionColumn.length);
-
-            // reset null flags
-            // todo this shouldn't be needed
-            Arrays.fill(nulls, false);
 
             return true;
         }

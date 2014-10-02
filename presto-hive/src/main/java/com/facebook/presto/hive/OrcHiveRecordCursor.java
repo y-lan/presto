@@ -42,7 +42,6 @@ import org.joda.time.DateTimeZone;
 import org.joda.time.format.ISODateTimeFormat;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -62,6 +61,7 @@ import static com.facebook.presto.hive.HiveType.HIVE_SHORT;
 import static com.facebook.presto.hive.HiveType.HIVE_STRING;
 import static com.facebook.presto.hive.HiveType.HIVE_TIMESTAMP;
 import static com.facebook.presto.hive.HiveUtil.getTableObjectInspector;
+import static com.facebook.presto.hive.HiveUtil.parseHiveTimestamp;
 import static com.facebook.presto.hive.NumberParser.parseDouble;
 import static com.facebook.presto.hive.NumberParser.parseLong;
 import static com.facebook.presto.hive.util.SerDeUtils.getJsonBytes;
@@ -127,7 +127,6 @@ class OrcHiveRecordCursor
         checkNotNull(splitSchema, "splitSchema is null");
         checkNotNull(partitionKeys, "partitionKeys is null");
         checkNotNull(columns, "columns is null");
-        checkArgument(!columns.isEmpty(), "columns is empty");
         checkNotNull(hiveStorageTimeZone, "hiveStorageTimeZone is null");
         checkNotNull(sessionTimeZone, "sessionTimeZone is null");
 
@@ -190,7 +189,10 @@ class OrcHiveRecordCursor
 
                 byte[] bytes = partitionKey.getValue().getBytes(Charsets.UTF_8);
 
-                if (types[columnIndex].equals(BOOLEAN)) {
+                if (HiveUtil.isHiveNull(bytes)) {
+                    nulls[columnIndex] = true;
+                }
+                else if (types[columnIndex].equals(BOOLEAN)) {
                     if (isTrue(bytes, 0, bytes.length)) {
                         booleans[columnIndex] = true;
                     }
@@ -219,6 +221,9 @@ class OrcHiveRecordCursor
                 }
                 else if (types[columnIndex].equals(DATE)) {
                     longs[columnIndex] = ISODateTimeFormat.date().withZone(DateTimeZone.UTC).parseMillis(partitionKey.getValue());
+                }
+                else if (types[columnIndex].equals(TIMESTAMP)) {
+                    longs[columnIndex] = parseHiveTimestamp(partitionKey.getValue(), hiveStorageTimeZone);
                 }
                 else {
                     throw new UnsupportedOperationException("Unsupported column type: " + types[columnIndex]);
@@ -272,10 +277,6 @@ class OrcHiveRecordCursor
             // reset loaded flags
             // partition keys are already loaded, but everything else is not
             System.arraycopy(isPartitionColumn, 0, loaded, 0, isPartitionColumn.length);
-
-            // reset null flags
-            // todo this shouldn't be needed
-            Arrays.fill(nulls, false);
 
             return true;
         }

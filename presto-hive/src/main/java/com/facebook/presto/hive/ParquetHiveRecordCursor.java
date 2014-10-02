@@ -109,7 +109,6 @@ class ParquetHiveRecordCursor
         checkNotNull(splitSchema, "splitSchema is null");
         checkNotNull(partitionKeys, "partitionKeys is null");
         checkNotNull(columns, "columns is null");
-        checkArgument(!columns.isEmpty(), "columns is empty");
 
         this.recordReader = createParquetRecordReader(configuration, path, start, length, columns);
 
@@ -149,7 +148,10 @@ class ParquetHiveRecordCursor
 
                 byte[] bytes = partitionKey.getValue().getBytes(Charsets.UTF_8);
 
-                if (types[columnIndex].equals(BOOLEAN)) {
+                if (HiveUtil.isHiveNull(bytes)) {
+                    nullsRowDefault[columnIndex] = true;
+                }
+                else if (types[columnIndex].equals(BOOLEAN)) {
                     if (isTrue(bytes, 0, bytes.length)) {
                         booleans[columnIndex] = true;
                     }
@@ -332,10 +334,6 @@ class ParquetHiveRecordCursor
             }
 
             ParquetInputSplit split;
-            if (splitGroup.isEmpty()) {
-                // split is empty
-                return null;
-            }
 
             split = new ParquetInputSplit(path,
                     splitStart,
