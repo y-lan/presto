@@ -116,7 +116,7 @@ public class SqlQueryManager
         this.queryExecutorMBean = new ThreadPoolExecutorMBean((ThreadPoolExecutor) queryExecutor);
 
         checkNotNull(config, "config is null");
-        this.queryStarter = new QueryStarter(queryExecutor, stats, config.getMaxConcurrentQueries(), config.getMaxQueuedQueries());
+        this.queryStarter = new QueryStarter(queryExecutor, stats, config.getMaxConcurrentQueries(), config.getMaxConcurrentQueriesPerUser(), config.getMaxQueuedQueries());
 
         this.queryMonitor = checkNotNull(queryMonitor, "queryMonitor is null");
         this.locationFactory = checkNotNull(locationFactory, "locationFactory is null");
@@ -402,15 +402,16 @@ public class SqlQueryManager
         private final AtomicInteger queueSize = new AtomicInteger();
         private final AsyncSemaphore<QueryExecution> asyncSemaphore;
 
-        public QueryStarter(Executor queryExecutor, SqlQueryManagerStats stats, int maxConcurrentQueries, int maxQueuedQueries)
+        public QueryStarter(Executor queryExecutor, SqlQueryManagerStats stats, int maxConcurrentQueries, int maxConcurrentQueriesPerUser, int maxQueuedQueries)
         {
             checkNotNull(queryExecutor, "queryExecutor is null");
             checkNotNull(stats, "stats is null");
             checkArgument(maxConcurrentQueries > 0, "must allow at least one running query");
+            checkArgument(maxConcurrentQueriesPerUser > 0, "must allow at least one running query per user");
             checkArgument(maxQueuedQueries > 0, "must allow at least one query in the queue");
 
             this.maxQueuedQueries = maxQueuedQueries;
-            this.asyncSemaphore = new AsyncSemaphore<>(maxConcurrentQueries, queryExecutor, new QuerySubmitter(queryExecutor, stats));
+            this.asyncSemaphore = new AsyncSemaphore<>(maxConcurrentQueries, maxConcurrentQueriesPerUser, queryExecutor, new QuerySubmitter(queryExecutor, stats));
         }
 
         public boolean submit(QueryExecution queryExecution)
@@ -419,7 +420,7 @@ public class SqlQueryManager
                 queueSize.decrementAndGet();
                 return false;
             }
-            asyncSemaphore.submit(queryExecution);
+            asyncSemaphore.submit(queryExecution, queryExecution.getQueryInfo().getSession().getUser());
             return true;
         }
 

@@ -46,7 +46,7 @@ public class TestAsyncSemaphore
     public void testInlineExecution()
             throws Exception
     {
-        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(1, executor, new Function<Runnable, ListenableFuture<?>>()
+        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(1, 1, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -66,7 +66,7 @@ public class TestAsyncSemaphore
                 {
                     count.incrementAndGet();
                 }
-            }));
+            }, "test"));
         }
 
         // Wait for completion
@@ -79,7 +79,7 @@ public class TestAsyncSemaphore
     public void testSingleThreadBoundedConcurrency()
             throws Exception
     {
-        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(1, executor, new Function<Runnable, ListenableFuture<?>>()
+        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(1, 1, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -104,7 +104,7 @@ public class TestAsyncSemaphore
                     Uninterruptibles.sleepUninterruptibly(1, TimeUnit.MILLISECONDS);
                     concurrency.decrementAndGet();
                 }
-            }));
+            }, "test"));
         }
 
         // Wait for completion
@@ -117,7 +117,7 @@ public class TestAsyncSemaphore
     public void testMultiThreadBoundedConcurrency()
             throws Exception
     {
-        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, executor, new Function<Runnable, ListenableFuture<?>>()
+        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, 2, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -142,7 +142,7 @@ public class TestAsyncSemaphore
                     Uninterruptibles.sleepUninterruptibly(1, TimeUnit.MILLISECONDS);
                     concurrency.decrementAndGet();
                 }
-            }));
+            }, "test"));
         }
 
         // Wait for completion
@@ -155,7 +155,7 @@ public class TestAsyncSemaphore
     public void testMultiSubmitters()
             throws Exception
     {
-        final AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, executor, new Function<Runnable, ListenableFuture<?>>()
+        final AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, 2, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -188,7 +188,7 @@ public class TestAsyncSemaphore
                             concurrency.decrementAndGet();
                             completionLatch.countDown();
                         }
-                    });
+                    }, "test");
                 }
             });
         }
@@ -205,7 +205,7 @@ public class TestAsyncSemaphore
     public void testFailedTasks()
             throws Exception
     {
-        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, executor, new Function<Runnable, ListenableFuture<?>>()
+        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, 2, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -232,7 +232,7 @@ public class TestAsyncSemaphore
                     concurrency.decrementAndGet();
                     throw new IllegalStateException();
                 }
-            });
+            }, "test");
             Futures.addCallback(future, new FutureCallback<Object>()
             {
                 @Override
@@ -277,7 +277,7 @@ public class TestAsyncSemaphore
         final AtomicInteger concurrency = new AtomicInteger();
         final CountDownLatch completionLatch = new CountDownLatch(1000);
 
-        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, executor, new Function<Runnable, ListenableFuture<?>>()
+        AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, 2, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -299,7 +299,7 @@ public class TestAsyncSemaphore
                 {
                     Assert.fail(); // Should never execute this
                 }
-            });
+            }, "test");
             Futures.addCallback(future, new FutureCallback<Object>()
             {
                 @Override
@@ -345,7 +345,7 @@ public class TestAsyncSemaphore
         final CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch completionLatch = new CountDownLatch(100);
 
-        final AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, executor, new Function<Runnable, ListenableFuture<?>>()
+        final AsyncSemaphore<Runnable> asyncSemaphore = new AsyncSemaphore<>(2, 2, executor, new Function<Runnable, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Runnable task)
@@ -373,7 +373,7 @@ public class TestAsyncSemaphore
                         {
                             Assert.fail(); // Should never execute this
                         }
-                    });
+                    }, "test");
                     futures.add(future);
                     Futures.addCallback(future, new FutureCallback<Object>()
                     {
@@ -418,7 +418,7 @@ public class TestAsyncSemaphore
     public void testNoStackOverflow()
             throws Exception
     {
-        AsyncSemaphore<Object> asyncSemaphore = new AsyncSemaphore<>(1, executor, new Function<Object, ListenableFuture<?>>()
+        AsyncSemaphore<Object> asyncSemaphore = new AsyncSemaphore<>(1, 1, executor, new Function<Object, ListenableFuture<?>>()
         {
             @Override
             public ListenableFuture<?> apply(Object object)
@@ -429,7 +429,7 @@ public class TestAsyncSemaphore
 
         List<ListenableFuture<?>> futures = new ArrayList<>();
         for (int i = 0; i < 1000; i++) {
-            futures.add(asyncSemaphore.submit(new Object()));
+            futures.add(asyncSemaphore.submit(new Object(), "test"));
         }
 
         // Wait for completion

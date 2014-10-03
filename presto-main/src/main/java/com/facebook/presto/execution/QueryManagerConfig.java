@@ -26,6 +26,7 @@ public class QueryManagerConfig
 {
     private int scheduleSplitBatchSize = 1000;
     private int maxConcurrentQueries = 1000;
+    private int maxConcurrentQueriesPerUser = 10;
     private int maxQueuedQueries = 5000;
     private int maxPendingSplitsPerNode = 100;
 
@@ -63,6 +64,19 @@ public class QueryManagerConfig
     public QueryManagerConfig setMaxConcurrentQueries(int maxConcurrentQueries)
     {
         this.maxConcurrentQueries = maxConcurrentQueries;
+        return this;
+    }
+
+    @Min(1)
+    public int getMaxConcurrentQueriesPerUser()
+    {
+        return maxConcurrentQueriesPerUser;
+    }
+
+    @Config("query.max-concurrent-queries-per-user")
+    public QueryManagerConfig setMaxConcurrentQueriesPerUser(int maxConcurrentQueriesPerUser)
+    {
+        this.maxConcurrentQueriesPerUser = maxConcurrentQueriesPerUser;
         return this;
     }
 

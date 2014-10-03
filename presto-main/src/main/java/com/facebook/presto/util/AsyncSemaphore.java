@@ -22,7 +22,9 @@ import com.google.common.util.concurrent.SettableFuture;
 import javax.annotation.concurrent.ThreadSafe;
 
 import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -39,30 +41,29 @@ import static com.google.common.base.Preconditions.checkNotNull;
 public class AsyncSemaphore<T>
 {
     private final Queue<QueuedTask<T>> queuedTasks = new ConcurrentLinkedQueue<>();
+    private final ConcurrentHashMap<String, Queue<QueuedTask<T>>> queuedKeyTasks = new ConcurrentHashMap<>();
+
     private final AtomicInteger counter = new AtomicInteger();
-    private final Runnable runNextTask = new Runnable()
-    {
-        @Override
-        public void run()
-        {
-            runNext();
-        }
-    };
+    public final ConcurrentMap<String, AtomicInteger> keyCounter = new ConcurrentHashMap<>();
+
     private final int maxPermits;
+    private final int maxPermitsPerKey;
     private final Executor submitExecutor;
     private final Function<T, ListenableFuture<?>> submitter;
 
-    public AsyncSemaphore(int maxPermits, Executor submitExecutor, Function<T, ListenableFuture<?>> submitter)
+    public AsyncSemaphore(int maxPermits, int maxPermitsPerKey, Executor submitExecutor, Function<T, ListenableFuture<?>> submitter)
     {
         checkArgument(maxPermits > 0, "must have at least one permit");
+        checkArgument(maxPermitsPerKey > 0, "must have at least one permit for each key");
         this.maxPermits = maxPermits;
+        this.maxPermitsPerKey = maxPermitsPerKey;
         this.submitExecutor = checkNotNull(submitExecutor, "submitExecutor is null");
         this.submitter = checkNotNull(submitter, "submitter is null");
     }
 
-    public ListenableFuture<?> submit(T task)
+    public ListenableFuture<?> submit(T task, String key)
     {
-        QueuedTask<T> queuedTask = new QueuedTask<>(task);
+        QueuedTask<T> queuedTask = new QueuedTask<>(task, key);
         queuedTasks.add(queuedTask);
         acquirePermit();
         return queuedTask.getCompletionFuture();
@@ -71,22 +72,48 @@ public class AsyncSemaphore<T>
     private void acquirePermit()
     {
         if (counter.incrementAndGet() <= maxPermits) {
-            // Kick off a task if not all permits have been handed out
-            submitExecutor.execute(runNextTask);
+            promoteOneToKeyTasks();
         }
     }
 
-    private void releasePermit()
+    private void promoteOneToKeyTasks()
     {
+        QueuedTask<T> task = queuedTasks.poll();
+        String key = task.getKey();
+        ConcurrentLinkedQueue<QueuedTask<T>> queue = new ConcurrentLinkedQueue<>();
+        queue.add(task);
+        Queue<QueuedTask<T>> oldQueue = queuedKeyTasks.putIfAbsent(key, queue);
+        if (oldQueue != null) {
+            oldQueue.add(task);
+        }
+        acquireKeyPermit(key);
+    }
+
+    private void acquireKeyPermit(String key)
+    {
+        AtomicInteger newCount = new AtomicInteger(1);
+        AtomicInteger oldCount = keyCounter.putIfAbsent(key, newCount);
+        if (!((oldCount != null) && oldCount.incrementAndGet() > maxPermitsPerKey)) {
+            submitExecutor.execute(new RunNextTask(key));
+        }
+    }
+
+    private void releasePermit(String key)
+    {
+        if (keyCounter.get(key).getAndDecrement() > maxPermitsPerKey) {
+            // Now that a key-slot is empty, can kick off another task for that key
+            submitExecutor.execute(new RunNextTask(key));
+        }
         if (counter.getAndDecrement() > maxPermits) {
-            // Now that a task has finished, we can kick off another task if there are more tasks than permits
-            submitExecutor.execute(runNextTask);
+            // Now that a task has finished, we can let another task in
+            promoteOneToKeyTasks();
         }
     }
 
-    private void runNext()
+    private void runNext(String key)
     {
-        final QueuedTask<T> queuedTask = queuedTasks.poll();
+        final QueuedTask<T> queuedTask = queuedKeyTasks.get(key).poll();
+        final String releaseKey = key;
         ListenableFuture<?> future = submitTask(queuedTask.getTask());
         Futures.addCallback(future, new FutureCallback<Object>()
         {
@@ -94,14 +121,14 @@ public class AsyncSemaphore<T>
             public void onSuccess(Object result)
             {
                 queuedTask.markCompleted();
-                releasePermit();
+                releasePermit(releaseKey);
             }
 
             @Override
             public void onFailure(Throwable t)
             {
                 queuedTask.markFailure(t);
-                releasePermit();
+                releasePermit(releaseKey);
             }
         });
     }
@@ -120,19 +147,42 @@ public class AsyncSemaphore<T>
         }
     }
 
+    private class RunNextTask implements Runnable
+    {
+        private String key;
+
+        RunNextTask(String key)
+        {
+            this.key = key;
+        }
+
+        @Override
+        public void run()
+        {
+            runNext(key);
+        }
+    }
+
     private static class QueuedTask<T>
     {
         private final T task;
+        private final String key;
         private final SettableFuture<?> settableFuture = SettableFuture.create();
 
-        private QueuedTask(T task)
+        private QueuedTask(T task, String key)
         {
             this.task = checkNotNull(task, "task is null");
+            this.key = checkNotNull(key, "key is null");
         }
 
         public T getTask()
         {
             return task;
+        }
+
+        public String getKey()
+        {
+            return key;
         }
 
         public void markFailure(Throwable throwable)
