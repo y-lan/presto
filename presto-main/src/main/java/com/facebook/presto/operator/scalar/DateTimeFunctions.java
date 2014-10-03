@@ -128,7 +128,7 @@ public final class DateTimeFunctions
     {
         long startTime = session.getStartTime();
         if (offset != 0) {
-            startTime = startTime + offset * 86400000l;
+            startTime = startTime + offset * 86400000L;
         }
 
         if (delim.equals(Slices.EMPTY_SLICE)) {
