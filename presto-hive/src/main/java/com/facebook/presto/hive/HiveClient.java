@@ -181,6 +181,7 @@ public class HiveClient
     private static final String HIVE_INVISIBLE_PROPERTY = "presto_invisible";
     private static final String HIVE_INVISIBLE_EXCLUDE_PROPERTY = "presto_invisible_survivors";
     private static final String HIVE_INVISIBLE_PROPERTY_TRUE = "true";
+    private static final String HIVE_ALLOW_CREATE_PROPERTY = "presto_create";
 
     @Inject
     public HiveClient(HiveConnectorId connectorId,
@@ -638,6 +639,12 @@ public class HiveClient
         SchemaTableName table = tableMetadata.getTable();
         String schemaName = table.getSchemaName();
         String tableName = table.getTableName();
+
+        Map<String, String> dbParams = getDatabase(schemaName).getParameters();
+        if (!dbParams.containsKey(HIVE_ALLOW_CREATE_PROPERTY) ||
+                !dbParams.get(HIVE_ALLOW_CREATE_PROPERTY).equals("true")) {
+            throw new RuntimeException(format("Presto is not allowed to create table in Database '%s'", schemaName));
+        }
 
         String location = getDatabase(schemaName).getLocationUri();
         if (isNullOrEmpty(location)) {
