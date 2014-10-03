@@ -1053,6 +1053,16 @@ public class HiveClient
             remainingTupleDomain = TupleDomain.withColumnDomains(Maps.filterKeys(tupleDomain.getDomains(), not(in(partitionKeysByName.values()))));
         }
 
+        if (tableName.getTableName().equals("access_log") && tableName.getSchemaName().equals("default")
+                && partitions.size() > 3000) {
+            throw new PrestoException(HiveErrorCode.HIVE_UNKNOWN_ERROR.toErrorCode(), format(
+                    "Boss, querying %s partitions in %s.%s is too much for me, try to limit \"dt\" ! ｡ﾟヽ（ﾟ｀Д´ﾟ）ﾉﾟ｡ｳｧｧｧﾝ",
+                    partitions.size(),
+                    tableName.getSchemaName(),
+                    tableName.getTableName()
+            ));
+        }
+
         return new ConnectorPartitionResult(partitions, remainingTupleDomain);
     }
 
