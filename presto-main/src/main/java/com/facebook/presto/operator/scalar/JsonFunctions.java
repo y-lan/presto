@@ -14,9 +14,11 @@
 package com.facebook.presto.operator.scalar;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.parser.Feature;
 import com.facebook.presto.metadata.OperatorType;
+import com.facebook.presto.operator.Description;
 import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.type.JsonPathType;
 import com.facebook.presto.type.SqlType;
@@ -314,19 +316,32 @@ public final class JsonFunctions
     }
 
     @ScalarFunction
+    @Description("fast json extract: json_get(JSON_OBJECT, 'key') or json_get(JSON_ARRAY, '[index]')")
     @Nullable
     @SqlType(StandardTypes.VARCHAR)
     public static Slice jsonGet(@SqlType(StandardTypes.VARCHAR) Slice json, @SqlType(StandardTypes.VARCHAR) Slice key)
     {
         try {
-            JSONObject jsonObject = JSON.parseObject(json.toStringUtf8(), Feature.DisableCircularReferenceDetect);
             String k = key.toStringUtf8();
-
-            if (jsonObject.containsKey(k)) {
-                return Slices.utf8Slice(jsonObject.get(k).toString());
+            if (k.startsWith("[")) {
+                int i = Integer.parseInt(k.substring(1, k.length() - 1));
+                JSONArray jsonArray = JSON.parseArray(json.toStringUtf8());
+                Object o = jsonArray.get(i);
+                if (o != null) {
+                    return Slices.utf8Slice(o.toString());
+                }
+                else {
+                    return null;
+                }
             }
             else {
-                return null;
+                JSONObject jsonObject = JSON.parseObject(json.toStringUtf8(), Feature.DisableCircularReferenceDetect);
+                if (jsonObject.containsKey(k)) {
+                    return Slices.utf8Slice(jsonObject.get(k).toString());
+                }
+                else {
+                    return null;
+                }
             }
         }
         catch (Exception e) {
