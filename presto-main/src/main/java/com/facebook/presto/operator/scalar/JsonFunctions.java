@@ -348,4 +348,12 @@ public final class JsonFunctions
             return null;
         }
     }
+
+    @ScalarFunction
+    @Nullable
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice toJson(@SqlType(StandardTypes.VARCHAR) Slice json)
+    {
+        return json;
+    }
 }
