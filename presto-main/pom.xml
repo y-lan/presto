@@ -257,6 +257,11 @@
           <artifactId>fastjson</artifactId>
         </dependency>
 
+        <dependency>
+          <groupId>org.antlr</groupId>
+          <artifactId>antlr-runtime</artifactId>
+        </dependency>
+
         <!-- for testing -->
         <dependency>
             <groupId>org.testng</groupId>

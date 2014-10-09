@@ -20,6 +20,7 @@ import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.sql.parser.ParsingException;
 import com.facebook.presto.sql.parser.SqlParser;
+import com.facebook.presto.sql.parser.StatementParser;
 import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.util.AsyncSemaphore;
 import com.facebook.presto.util.IterableTransformer;
@@ -34,6 +35,8 @@ import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.concurrent.ThreadPoolExecutorMBean;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
+import org.antlr.runtime.NoViableAltException;
+import org.antlr.runtime.RecognitionException;
 import org.joda.time.DateTime;
 import org.weakref.jmx.Flatten;
 import org.weakref.jmx.Managed;
@@ -217,6 +220,17 @@ public class SqlQueryManager
             statement = sqlParser.createStatement(query);
         }
         catch (ParsingException e) {
+            RecognitionException cause = e.getCause();
+            if (cause instanceof NoViableAltException) {
+                switch (((NoViableAltException) cause).token.getType()) {
+                    case StatementParser.SHOW:
+                        e = new ParsingException(String.format("Boss, wrong `SHOW` statement.\n" +
+                                "Please check the SQL Manual: http://prestodb.io/docs/current/sql.html\n" +
+                                "(debug: %s)", e.getErrorMessage()), cause);
+                        break;
+                    default:
+                }
+            }
             return createFailedQuery(session, query, queryId, e);
         }
 
