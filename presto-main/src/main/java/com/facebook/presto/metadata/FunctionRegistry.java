@@ -126,8 +126,11 @@ import static com.facebook.presto.operator.aggregation.MaxBy.MAX_BY;
 import static com.facebook.presto.operator.scalar.ArrayCardinalityFunction.ARRAY_CARDINALITY;
 import static com.facebook.presto.operator.scalar.ArrayConstructor.ARRAY_CONSTRUCTOR;
 import static com.facebook.presto.operator.scalar.ArraySubscriptOperator.ARRAY_SUBSCRIPT;
+import static com.facebook.presto.operator.scalar.ArrayToJsonCast.ARRAY_TO_JSON;
 import static com.facebook.presto.operator.scalar.IdentityCast.IDENTITY_CAST;
+import static com.facebook.presto.operator.scalar.MapCardinalityFunction.MAP_CARDINALITY;
 import static com.facebook.presto.operator.scalar.MapSubscriptOperator.MAP_SUBSCRIPT;
+import static com.facebook.presto.operator.scalar.MapToJsonCast.MAP_TO_JSON;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DateType.DATE;
@@ -253,10 +256,13 @@ public class FunctionRegistry
                 .function(ARRAY_CONSTRUCTOR)
                 .function(ARRAY_SUBSCRIPT)
                 .function(ARRAY_CARDINALITY)
+                .function(MAP_CARDINALITY)
                 .function(MAP_SUBSCRIPT)
                 .function(IDENTITY_CAST)
                 .function(MAX_BY)
-                .function(COUNT_COLUMN);
+                .function(COUNT_COLUMN)
+                .function(ARRAY_TO_JSON)
+                .function(MAP_TO_JSON);
 
         if (experimentalSyntaxEnabled) {
             builder.aggregate(ApproximateAverageAggregations.class)
@@ -307,7 +313,7 @@ public class FunctionRegistry
             Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, false, typeManager);
             if (boundTypeParameters != null) {
                 checkArgument(match == null, "Ambiguous call to %s with parameters %s", name, parameterTypes);
-                match = function.specialize(boundTypeParameters, resolvedTypes.size());
+                match = function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager);
             }
         }
 
@@ -320,7 +326,7 @@ public class FunctionRegistry
             Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, true, typeManager);
             if (boundTypeParameters != null) {
                 // TODO: This should also check for ambiguities
-                return function.specialize(boundTypeParameters, resolvedTypes.size());
+                return function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager);
             }
         }
 
@@ -376,7 +382,7 @@ public class FunctionRegistry
             List<Type> argumentTypes = resolveTypes(signature.getArgumentTypes(), typeManager);
             Map<String, Type> boundTypeParameters = operator.getSignature().bindTypeParameters(returnType, argumentTypes, false, typeManager);
             if (boundTypeParameters != null) {
-                return operator.specialize(boundTypeParameters, signature.getArgumentTypes().size());
+                return operator.specialize(boundTypeParameters, signature.getArgumentTypes().size(), typeManager);
             }
         }
         return null;

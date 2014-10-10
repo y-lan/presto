@@ -60,7 +60,6 @@ import org.testng.annotations.Test;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -72,6 +71,7 @@ import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.airlift.testing.Assertions.assertInstanceOf;
+import static java.util.Locale.ENGLISH;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
@@ -80,7 +80,7 @@ import static org.testng.Assert.fail;
 @Test(singleThreaded = true)
 public class TestCassandraConnector
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
+    private static final ConnectorSession SESSION = new ConnectorSession("user", UTC_KEY, ENGLISH, System.currentTimeMillis(), null);
     protected static final String INVALID_DATABASE = "totally_invalid_database";
 
     private ConnectorMetadata metadata;
@@ -146,7 +146,7 @@ public class TestCassandraConnector
             throws Exception
     {
         List<String> databases = metadata.listSchemaNames(SESSION);
-        assertTrue(databases.contains(database.toLowerCase()));
+        assertTrue(databases.contains(database.toLowerCase(ENGLISH)));
     }
 
     @Test

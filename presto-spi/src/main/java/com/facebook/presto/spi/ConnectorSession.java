@@ -17,8 +17,11 @@ import com.facebook.presto.spi.type.TimeZoneKey;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
+import static java.util.Collections.unmodifiableMap;
 import static java.util.Objects.requireNonNull;
 
 public class ConnectorSession
@@ -26,38 +29,32 @@ public class ConnectorSession
     private final String user;
     private final TimeZoneKey timeZoneKey;
     private final Locale locale;
-    private final String schema;
     private final long startTime;
+    private final Map<String, String> properties;
 
     @JsonCreator
     public ConnectorSession(
             @JsonProperty("user") String user,
-            @JsonProperty("schema") String schema,
             @JsonProperty("timeZoneKey") TimeZoneKey timeZoneKey,
             @JsonProperty("locale") Locale locale,
-            @JsonProperty("startTime") long startTime)
+            @JsonProperty("startTime") long startTime,
+            @JsonProperty("properties") Map<String, String> properties)
     {
         this.user = requireNonNull(user, "user is null");
         this.timeZoneKey = requireNonNull(timeZoneKey, "timeZoneKey is null");
         this.locale = requireNonNull(locale, "locale is null");
-        this.schema = requireNonNull(schema, "schema is null");
         this.startTime = startTime;
+
+        if (properties == null) {
+            properties = new HashMap<>();
+        }
+        this.properties = unmodifiableMap(new HashMap<>(properties));
     }
 
     @JsonProperty
     public String getUser()
     {
         return user;
-    }
-
-    /**
-     * DO NOT CALL THIS FROM CONNECTORS. IT WILL BE REMOVED SOON.
-     */
-    @Deprecated
-    @JsonProperty
-    public String getSchema()
-    {
-        return schema;
     }
 
     @JsonProperty
@@ -78,15 +75,21 @@ public class ConnectorSession
         return startTime;
     }
 
+    @JsonProperty
+    public Map<String, String> getProperties()
+    {
+        return properties;
+    }
+
     @Override
     public String toString()
     {
         StringBuilder builder = new StringBuilder("Session{");
         builder.append("user='").append(user).append('\'');
-        builder.append(", schema='").append(schema).append('\'');
         builder.append(", timeZoneKey=").append(timeZoneKey);
         builder.append(", locale=").append(locale);
         builder.append(", startTime=").append(startTime);
+        builder.append(", properties=").append(properties);
         builder.append('}');
         return builder.toString();
     }

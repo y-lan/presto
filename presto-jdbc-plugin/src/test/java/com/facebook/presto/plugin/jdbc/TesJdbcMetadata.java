@@ -39,7 +39,7 @@ import static org.testng.Assert.fail;
 
 public class TesJdbcMetadata
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", TimeZoneKey.UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
+    private static final ConnectorSession SESSION = new ConnectorSession("user", TimeZoneKey.UTC_KEY, Locale.ENGLISH, System.currentTimeMillis(), null);
     private static final String CONNECTOR_ID = "TEST";
 
     private JdbcMetadata metadata;

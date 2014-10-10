@@ -19,7 +19,7 @@ import io.airlift.slice.Slice;
 
 import static com.facebook.presto.metadata.OperatorType.CAST;
 
-public class HyperLogLogOperators
+public final class HyperLogLogOperators
 {
     private HyperLogLogOperators()
     {
@@ -28,6 +28,13 @@ public class HyperLogLogOperators
     @ScalarOperator(CAST)
     @SqlType(StandardTypes.VARBINARY)
     public static Slice castToBinary(@SqlType(StandardTypes.HYPER_LOG_LOG) Slice slice)
+    {
+        return slice;
+    }
+
+    @ScalarOperator(CAST)
+    @SqlType(StandardTypes.HYPER_LOG_LOG)
+    public static Slice castFromVarbinary(@SqlType(StandardTypes.VARBINARY) Slice slice)
     {
         return slice;
     }

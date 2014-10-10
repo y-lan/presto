@@ -13,6 +13,8 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.StandardErrorCode;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.BooleanType;
 import com.facebook.presto.spi.type.DateType;
@@ -32,8 +34,11 @@ import javax.annotation.Nullable;
 
 import java.util.Set;
 
+import static com.facebook.presto.hive.HiveUtil.isArrayType;
+import static com.facebook.presto.hive.HiveUtil.isMapType;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.lang.String.format;
 import static org.apache.hadoop.hive.serde.Constants.BIGINT_TYPE_NAME;
 import static org.apache.hadoop.hive.serde.Constants.BINARY_TYPE_NAME;
 import static org.apache.hadoop.hive.serde.Constants.BOOLEAN_TYPE_NAME;
@@ -147,7 +152,16 @@ public final class HiveType
         if (TimestampType.TIMESTAMP.equals(type)) {
             return HIVE_TIMESTAMP;
         }
-        throw new IllegalArgumentException("unsupported type: " + type);
+        if (isArrayType(type)) {
+            HiveType hiveElementType = toHiveType(type.getTypeParameters().get(0));
+            return new HiveType(format("array<%s>", hiveElementType.getHiveTypeName()));
+        }
+        if (isMapType(type)) {
+            HiveType hiveKeyType = toHiveType(type.getTypeParameters().get(0));
+            HiveType hiveValueType = toHiveType(type.getTypeParameters().get(1));
+            return new HiveType(format("map<%s,%s>", hiveKeyType.getHiveTypeName(), hiveValueType.getHiveTypeName()));
+        }
+        throw new PrestoException(StandardErrorCode.NOT_SUPPORTED.toErrorCode(), "unsupported type: " + type);
     }
 
     public static Function<Type, HiveType> columnTypeToHiveType()

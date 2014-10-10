@@ -53,6 +53,7 @@ import static com.facebook.presto.sql.parser.StatementSplitter.squeezeStatement;
 import static com.google.common.io.ByteStreams.nullOutputStream;
 import static io.airlift.log.Logging.Level;
 import static java.lang.String.format;
+import static java.util.Locale.ENGLISH;
 import static jline.internal.Configuration.getUserHome;
 
 @Command(name = "presto", description = "Presto interactive console")
@@ -169,7 +170,7 @@ public class Console
                     if (command.endsWith(";")) {
                         command = command.substring(0, command.length() - 1).trim();
                     }
-                    switch (command.toLowerCase()) {
+                    switch (command.toLowerCase(ENGLISH)) {
                         case "exit":
                         case "quit":
                             return;

@@ -45,6 +45,7 @@ import static com.facebook.presto.type.DateTimeOperators.modulo24Hour;
 import static com.facebook.presto.util.DateTimeZoneIndex.extractZoneOffsetMinutes;
 import static com.facebook.presto.util.DateTimeZoneIndex.getChronology;
 import static com.facebook.presto.util.DateTimeZoneIndex.unpackChronology;
+import static java.util.Locale.ENGLISH;
 
 public final class DateTimeFunctions
 {
@@ -394,7 +395,7 @@ public final class DateTimeFunctions
 
     private static DateTimeField getDateField(ISOChronology chronology, Slice unit)
     {
-        String unitString = unit.toString(Charsets.UTF_8).toLowerCase();
+        String unitString = unit.toString(Charsets.UTF_8).toLowerCase(ENGLISH);
         switch (unitString) {
             case "day":
                 return chronology.dayOfMonth();
@@ -413,7 +414,7 @@ public final class DateTimeFunctions
 
     private static DateTimeField getTimeField(ISOChronology chronology, Slice unit)
     {
-        String unitString = unit.toString(Charsets.UTF_8).toLowerCase();
+        String unitString = unit.toString(Charsets.UTF_8).toLowerCase(ENGLISH);
         switch (unitString) {
             case "second":
                 return chronology.secondOfMinute();
@@ -428,7 +429,7 @@ public final class DateTimeFunctions
 
     private static DateTimeField getTimestampField(ISOChronology chronology, Slice unit)
     {
-        String unitString = unit.toString(Charsets.UTF_8).toLowerCase();
+        String unitString = unit.toString(Charsets.UTF_8).toLowerCase(ENGLISH);
         switch (unitString) {
             case "second":
                 return chronology.secondOfMinute();

@@ -13,8 +13,9 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.ConnectorOutputTableHandle;
+import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.type.Type;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
@@ -35,6 +36,8 @@ public class HiveOutputTableHandle
     private final String tableOwner;
     private final String targetPath;
     private final String temporaryPath;
+    private final ConnectorSession connectorSession;
+    private final HiveStorageFormat hiveStorageFormat;
 
     @JsonCreator
     public HiveOutputTableHandle(
@@ -45,7 +48,9 @@ public class HiveOutputTableHandle
             @JsonProperty("columnTypes") List<Type> columnTypes,
             @JsonProperty("tableOwner") String tableOwner,
             @JsonProperty("targetPath") String targetPath,
-            @JsonProperty("temporaryPath") String temporaryPath)
+            @JsonProperty("temporaryPath") String temporaryPath,
+            @JsonProperty("connectorSession") ConnectorSession connectorSession,
+            @JsonProperty("hiveStorageFormat") HiveStorageFormat hiveStorageFormat)
     {
         this.clientId = checkNotNull(clientId, "clientId is null");
         this.schemaName = checkNotNull(schemaName, "schemaName is null");
@@ -53,12 +58,15 @@ public class HiveOutputTableHandle
         this.tableOwner = checkNotNull(tableOwner, "tableOwner is null");
         this.targetPath = checkNotNull(targetPath, "targetPath is null");
         this.temporaryPath = checkNotNull(temporaryPath, "temporaryPath is null");
+        this.connectorSession = checkNotNull(connectorSession, "session is null");
+        this.hiveStorageFormat = checkNotNull(hiveStorageFormat, "hiveStorageFormat is null");
 
         checkNotNull(columnNames, "columnNames is null");
         checkNotNull(columnTypes, "columnTypes is null");
         checkArgument(columnNames.size() == columnTypes.size(), "columnNames and columnTypes sizes don't match");
         this.columnNames = ImmutableList.copyOf(columnNames);
         this.columnTypes = ImmutableList.copyOf(columnTypes);
+
     }
 
     @JsonProperty
@@ -107,6 +115,18 @@ public class HiveOutputTableHandle
     public String getTemporaryPath()
     {
         return temporaryPath;
+    }
+
+    @JsonProperty
+    public ConnectorSession getConnectorSession()
+    {
+        return connectorSession;
+    }
+
+    @JsonProperty
+    public HiveStorageFormat getHiveStorageFormat()
+    {
+        return hiveStorageFormat;
     }
 
     @Override

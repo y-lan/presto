@@ -43,6 +43,7 @@ import com.facebook.presto.spi.SerializableNativeValue;
 import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.spi.ViewNotFoundException;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.base.Function;
@@ -75,11 +76,15 @@ import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.SerDeInfo;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.MapObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.mapred.JobConf;
 import org.joda.time.DateTimeZone;
+
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -110,6 +115,7 @@ import static com.facebook.presto.hive.HiveUtil.parseHiveTimestamp;
 import static com.facebook.presto.hive.HiveUtil.partitionIdGetter;
 import static com.facebook.presto.hive.UnpartitionedPartition.UNPARTITIONED_PARTITION;
 import static com.facebook.presto.hive.util.Types.checkType;
+import static com.facebook.presto.spi.StandardErrorCode.INVALID_SESSION_PROPERTY;
 import static com.facebook.presto.spi.StandardErrorCode.PERMISSION_DENIED;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
@@ -153,6 +159,7 @@ import static org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspe
 public class HiveClient
         implements ConnectorMetadata, ConnectorSplitManager, ConnectorRecordSinkProvider, ConnectorHandleResolver
 {
+    public static final String STORAGE_FORMAT_PROPERTY = "storage_format";
     public static final String PRESTO_OFFLINE = "presto_offline";
 
     private static final Logger log = Logger.get(HiveClient.class);
@@ -447,7 +454,9 @@ public class HiveClient
             // ignore unsupported types rather than failing
             HiveType hiveType = getHiveType(field.getFieldObjectInspector());
             if (hiveType != null && (includeSampleWeight || !field.getFieldName().equals(SAMPLE_WEIGHT_COLUMN_NAME))) {
-                columns.add(new HiveColumnHandle(connectorId, field.getFieldName(), hiveColumnIndex, hiveType, getType(field.getFieldObjectInspector()).getName(), hiveColumnIndex, false));
+                Type type = getType(field.getFieldObjectInspector(), typeManager);
+                checkNotNull(type, "Unsupported hive type: %s", field.getFieldObjectInspector().getTypeName());
+                columns.add(new HiveColumnHandle(connectorId, field.getFieldName(), hiveColumnIndex, hiveType, type.getName(), hiveColumnIndex, false));
             }
             hiveColumnIndex++;
         }
@@ -492,16 +501,28 @@ public class HiveClient
         }
     }
 
-    public static Type getType(ObjectInspector fieldInspector)
+    @Nullable
+    public static Type getType(ObjectInspector fieldInspector, TypeManager typeManager)
     {
         switch (fieldInspector.getCategory()) {
             case PRIMITIVE:
                 PrimitiveCategory primitiveCategory = ((PrimitiveObjectInspector) fieldInspector).getPrimitiveCategory();
                 return getPrimitiveType(primitiveCategory);
             case MAP:
-                return VARCHAR;
+                MapObjectInspector mapObjectInspector = checkType(fieldInspector, MapObjectInspector.class, "fieldInspector");
+                Type keyType = getType(mapObjectInspector.getMapKeyObjectInspector(), typeManager);
+                Type valueType = getType(mapObjectInspector.getMapValueObjectInspector(), typeManager);
+                if (keyType == null || valueType == null) {
+                    return null;
+                }
+                return typeManager.getParameterizedType(StandardTypes.MAP, ImmutableList.of(keyType.getName(), valueType.getName()));
             case LIST:
-                return VARCHAR;
+                ListObjectInspector listObjectInspector = checkType(fieldInspector, ListObjectInspector.class, "fieldInspector");
+                Type elementType = getType(listObjectInspector.getListElementObjectInspector(), typeManager);
+                if (elementType == null) {
+                    return null;
+                }
+                return typeManager.getParameterizedType(StandardTypes.ARRAY, ImmutableList.of(elementType.getName()));
             case STRUCT:
                 return VARCHAR;
             default:
@@ -624,6 +645,8 @@ public class HiveClient
 
         checkArgument(!isNullOrEmpty(tableMetadata.getOwner()), "Table owner is null or empty");
 
+        HiveStorageFormat hiveStorageFormat = getHiveStorageFormat(session);
+
         ImmutableList.Builder<String> columnNames = ImmutableList.builder();
         ImmutableList.Builder<Type> columnTypes = ImmutableList.builder();
         for (ColumnMetadata column : tableMetadata.getColumns()) {
@@ -667,14 +690,16 @@ public class HiveClient
 
         if (!useTemporaryDirectory(targetPath)) {
             return new HiveOutputTableHandle(
-                connectorId,
-                schemaName,
-                tableName,
-                columnNames.build(),
-                columnTypes.build(),
-                tableMetadata.getOwner(),
-                targetPath.toString(),
-                targetPath.toString());
+                    connectorId,
+                    schemaName,
+                    tableName,
+                    columnNames.build(),
+                    columnTypes.build(),
+                    tableMetadata.getOwner(),
+                    targetPath.toString(),
+                    targetPath.toString(),
+                    session,
+                    hiveStorageFormat);
         }
 
         // use a per-user temporary directory to avoid permission problems
@@ -694,7 +719,24 @@ public class HiveClient
                 columnTypes.build(),
                 tableMetadata.getOwner(),
                 targetPath.toString(),
-                temporaryPath.toString());
+                temporaryPath.toString(),
+                session,
+                hiveStorageFormat);
+    }
+
+    public HiveStorageFormat getHiveStorageFormat(ConnectorSession session)
+    {
+        String storageFormatString = session.getProperties().get(STORAGE_FORMAT_PROPERTY);
+        if (storageFormatString == null) {
+            return this.hiveStorageFormat;
+        }
+
+        try {
+            return HiveStorageFormat.valueOf(storageFormatString.toUpperCase());
+        }
+        catch (IllegalArgumentException e) {
+            throw new PrestoException(INVALID_SESSION_PROPERTY.toErrorCode(), "Hive storage-format is invalid: " + storageFormatString);
+        }
     }
 
     @Override
@@ -734,6 +776,8 @@ public class HiveClient
                 columns.add(new FieldSchema(name, type, null));
             }
         }
+
+        HiveStorageFormat hiveStorageFormat = handle.getHiveStorageFormat();
 
         SerDeInfo serdeInfo = new SerDeInfo();
         serdeInfo.setName(handle.getTableName());

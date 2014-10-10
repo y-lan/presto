@@ -48,6 +48,8 @@ import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.testing.MaterializedRow;
+import com.facebook.presto.type.ArrayType;
+import com.facebook.presto.type.MapType;
 import com.facebook.presto.type.TypeRegistry;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
@@ -66,7 +68,6 @@ import org.testng.annotations.Test;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
@@ -74,6 +75,13 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
 import static com.facebook.presto.hive.HiveBucketing.HiveBucket;
+import static com.facebook.presto.hive.HiveClient.STORAGE_FORMAT_PROPERTY;
+import static com.facebook.presto.hive.HiveStorageFormat.ORC;
+import static com.facebook.presto.hive.HiveStorageFormat.PARQUET;
+import static com.facebook.presto.hive.HiveStorageFormat.RCBINARY;
+import static com.facebook.presto.hive.HiveStorageFormat.RCTEXT;
+import static com.facebook.presto.hive.HiveStorageFormat.SEQUENCEFILE;
+import static com.facebook.presto.hive.HiveStorageFormat.TEXTFILE;
 import static com.facebook.presto.hive.HiveTestUtils.DEFAULT_HIVE_RECORD_CURSOR_PROVIDERS;
 import static com.facebook.presto.hive.HiveTestUtils.TYPE_MANAGER;
 import static com.facebook.presto.hive.HiveTestUtils.getTypes;
@@ -98,6 +106,7 @@ import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.airlift.slice.Slices.utf8Slice;
 import static io.airlift.testing.Assertions.assertInstanceOf;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Locale.ENGLISH;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -109,7 +118,7 @@ import static org.testng.Assert.fail;
 @Test(groups = "hive")
 public abstract class AbstractTestHiveClient
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "default", UTC_KEY, Locale.ENGLISH, System.currentTimeMillis());
+    private static final ConnectorSession SESSION = new ConnectorSession("user", UTC_KEY, ENGLISH, System.currentTimeMillis(), null);
 
     protected static final String INVALID_DATABASE = "totally_invalid_database_name";
     protected static final String INVALID_TABLE = "totally_invalid_table_name";
@@ -220,18 +229,18 @@ public abstract class AbstractTestHiveClient
                                 .build(),
                         Optional.<HiveBucket>absent()))
                 .add(new HivePartition(tablePartitionFormat,
-                        "ds=2012-12-29/file_format=rcfile-text/dummy=3",
+                        "ds=2012-12-29/file_format=rctext/dummy=3",
                         ImmutableMap.<ConnectorColumnHandle, SerializableNativeValue>builder()
                                 .put(dsColumn, new SerializableNativeValue(Slice.class, utf8Slice("2012-12-29")))
-                                .put(fileFormatColumn, new SerializableNativeValue(Slice.class, utf8Slice("rcfile-text")))
+                                .put(fileFormatColumn, new SerializableNativeValue(Slice.class, utf8Slice("rctext")))
                                 .put(dummyColumn, new SerializableNativeValue(Long.class, 3L))
                                 .build(),
                         Optional.<HiveBucket>absent()))
                 .add(new HivePartition(tablePartitionFormat,
-                        "ds=2012-12-29/file_format=rcfile-binary/dummy=4",
+                        "ds=2012-12-29/file_format=rcbinary/dummy=4",
                         ImmutableMap.<ConnectorColumnHandle, SerializableNativeValue>builder()
                                 .put(dsColumn, new SerializableNativeValue(Slice.class, utf8Slice("2012-12-29")))
-                                .put(fileFormatColumn, new SerializableNativeValue(Slice.class, utf8Slice("rcfile-binary")))
+                                .put(fileFormatColumn, new SerializableNativeValue(Slice.class, utf8Slice("rcbinary")))
                                 .put(dummyColumn, new SerializableNativeValue(Long.class, 4L))
                                 .build(),
                         Optional.<HiveBucket>absent()))
@@ -677,7 +686,8 @@ public abstract class AbstractTestHiveClient
 
             List<HivePartitionKey> partitionKeys = hiveSplit.getPartitionKeys();
             String ds = partitionKeys.get(0).getValue();
-            String fileType = partitionKeys.get(1).getValue();
+            String fileFormat = partitionKeys.get(1).getValue();
+            HiveStorageFormat fileType = HiveStorageFormat.valueOf(fileFormat.toUpperCase());
             long dummyPartition = Long.parseLong(partitionKeys.get(2).getValue());
 
             long rowNumber = 0;
@@ -729,7 +739,7 @@ public abstract class AbstractTestHiveClient
                     }
 
                     assertEquals(row.getField(columnIndex.get("ds")), ds);
-                    assertEquals(row.getField(columnIndex.get("file_format")), fileType);
+                    assertEquals(row.getField(columnIndex.get("file_format")), fileFormat);
                     assertEquals(row.getField(columnIndex.get("dummy")), dummyPartition);
 
                     long newCompletedBytes = pageSource.getCompletedBytes();
@@ -760,7 +770,8 @@ public abstract class AbstractTestHiveClient
 
             List<HivePartitionKey> partitionKeys = hiveSplit.getPartitionKeys();
             String ds = partitionKeys.get(0).getValue();
-            String fileType = partitionKeys.get(1).getValue();
+            String fileFormat = partitionKeys.get(1).getValue();
+            HiveStorageFormat fileType = HiveStorageFormat.valueOf(fileFormat.toUpperCase());
             long dummyPartition = Long.parseLong(partitionKeys.get(2).getValue());
 
             long rowNumber = 0;
@@ -772,7 +783,7 @@ public abstract class AbstractTestHiveClient
 
                     assertEquals(row.getField(columnIndex.get("t_double")),  6.2 + rowNumber);
                     assertEquals(row.getField(columnIndex.get("ds")), ds);
-                    assertEquals(row.getField(columnIndex.get("file_format")), fileType);
+                    assertEquals(row.getField(columnIndex.get("file_format")), fileFormat);
                     assertEquals(row.getField(columnIndex.get("dummy")), dummyPartition);
                 }
             }
@@ -799,7 +810,7 @@ public abstract class AbstractTestHiveClient
 
             long rowNumber = 0;
             try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
-                assertPageSourceType(pageSource, "textfile");
+                assertPageSourceType(pageSource, TEXTFILE);
                 MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
 
                 assertEquals(pageSource.getTotalBytes(), hiveSplit.getLength());
@@ -846,49 +857,49 @@ public abstract class AbstractTestHiveClient
     public void testTypesTextFile()
             throws Exception
     {
-        assertGetRecords("presto_test_types_textfile", "textfile");
+        assertGetRecords("presto_test_types_textfile", TEXTFILE);
     }
 
     @Test
     public void testTypesSequenceFile()
             throws Exception
     {
-        assertGetRecords("presto_test_types_sequencefile", "sequencefile");
+        assertGetRecords("presto_test_types_sequencefile", SEQUENCEFILE);
     }
 
     @Test
     public void testTypesRcText()
             throws Exception
     {
-        assertGetRecords("presto_test_types_rctext", "rctext");
+        assertGetRecords("presto_test_types_rctext", RCTEXT);
     }
 
     @Test
     public void testTypesRcBinary()
             throws Exception
     {
-        assertGetRecords("presto_test_types_rcbinary", "rcbinary");
+        assertGetRecords("presto_test_types_rcbinary", RCBINARY);
     }
 
     @Test
     public void testTypesOrc()
             throws Exception
     {
-        assertGetRecordsOptional("presto_test_types_orc", "orc");
+        assertGetRecordsOptional("presto_test_types_orc", ORC);
     }
 
     @Test
     public void testTypesParquet()
             throws Exception
     {
-        assertGetRecordsOptional("presto_test_types_parquet", "parquet");
+        assertGetRecordsOptional("presto_test_types_parquet", PARQUET);
     }
 
     @Test
     public void testTypesDwrf()
             throws Exception
     {
-        assertGetRecordsOptional("presto_test_types_dwrf", "dwrf");
+        assertGetRecordsOptional("presto_test_types_dwrf", ORC);
     }
 
     @Test
@@ -932,11 +943,13 @@ public abstract class AbstractTestHiveClient
     public void testTableCreation()
             throws Exception
     {
-        try {
-            doCreateTable();
-        }
-        finally {
-            dropTable(temporaryCreateTable);
+        for (HiveStorageFormat storageFormat : HiveStorageFormat.values()) {
+            try {
+                doCreateTable(storageFormat);
+            }
+            finally {
+                dropTable(temporaryCreateTable);
+            }
         }
     }
 
@@ -1079,7 +1092,7 @@ public abstract class AbstractTestHiveClient
         ConnectorSplit split = getOnlyElement(getAllSplits(splitSource));
 
         try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
-            assertPageSourceType(pageSource, "rcfile-binary");
+            assertPageSourceType(pageSource, RCBINARY);
             MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
             assertEquals(result.getRowCount(), 3);
 
@@ -1099,7 +1112,7 @@ public abstract class AbstractTestHiveClient
         }
     }
 
-    private void doCreateTable()
+    private void doCreateTable(HiveStorageFormat storageFormat)
             throws Exception
     {
         // begin creating the table
@@ -1112,7 +1125,15 @@ public abstract class AbstractTestHiveClient
                 .build();
 
         ConnectorTableMetadata tableMetadata = new ConnectorTableMetadata(temporaryCreateTable, columns, tableOwner);
-        ConnectorOutputTableHandle outputHandle = metadata.beginCreateTable(SESSION, tableMetadata);
+
+        ConnectorSession session = new ConnectorSession(
+                SESSION.getUser(),
+                SESSION.getTimeZoneKey(),
+                SESSION.getLocale(),
+                SESSION.getStartTime(),
+                ImmutableMap.of(STORAGE_FORMAT_PROPERTY, storageFormat.name().toLowerCase()));
+
+        ConnectorOutputTableHandle outputHandle = metadata.beginCreateTable(session, tableMetadata);
 
         // write the records
         RecordSink sink = recordSinkProvider.getRecordSink(outputHandle);
@@ -1169,8 +1190,8 @@ public abstract class AbstractTestHiveClient
         ConnectorSplit split = getOnlyElement(getAllSplits(splitSource));
 
         try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(split, columnHandles)) {
-            assertPageSourceType(pageSource, "rcfile-binary");
-            MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
+            assertPageSourceType(pageSource, storageFormat);
+            MaterializedResult result = materializeSourceDataStream(session, pageSource, getTypes(columnHandles));
             assertEquals(result.getRowCount(), 3);
 
             MaterializedRow row;
@@ -1198,15 +1219,15 @@ public abstract class AbstractTestHiveClient
         }
     }
 
-    protected void assertGetRecordsOptional(String tableName, String fileType)
+    protected void assertGetRecordsOptional(String tableName, HiveStorageFormat hiveStorageFormat)
             throws Exception
     {
         if (metadata.getTableHandle(SESSION, new SchemaTableName(database, tableName)) != null) {
-            assertGetRecords(tableName, fileType);
+            assertGetRecords(tableName, hiveStorageFormat);
         }
     }
 
-    protected void assertGetRecords(String tableName, String fileType)
+    protected void assertGetRecords(String tableName, HiveStorageFormat hiveStorageFormat)
             throws Exception
     {
         ConnectorTableHandle tableHandle = getTableHandle(new SchemaTableName(database, tableName));
@@ -1224,7 +1245,7 @@ public abstract class AbstractTestHiveClient
         try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(hiveSplit, columnHandles)) {
             MaterializedResult result = materializeSourceDataStream(SESSION, pageSource, getTypes(columnHandles));
 
-            assertPageSourceType(pageSource, fileType);
+            assertPageSourceType(pageSource, hiveStorageFormat);
 
             for (MaterializedRow row : result) {
                 try {
@@ -1339,7 +1360,7 @@ public abstract class AbstractTestHiveClient
                         assertNull(row.getField(index));
                     }
                     else {
-                        assertEquals(row.getField(index), "{\"test key\":\"test value\"}");
+                        assertEquals(row.getField(index), ImmutableMap.of("test key", "test value"));
                     }
                 }
 
@@ -1350,7 +1371,7 @@ public abstract class AbstractTestHiveClient
                         assertNull(row.getField(index));
                     }
                     else {
-                        assertEquals(row.getField(index), "[\"abc\",\"xyz\",\"data\"]");
+                        assertEquals(row.getField(index), ImmutableList.of("abc", "xyz", "data"));
                     }
                 }
 
@@ -1361,10 +1382,9 @@ public abstract class AbstractTestHiveClient
                         assertNull(row.getField(index));
                     }
                     else {
-                        String expectedJson = "[" +
-                                "{\"s_string\":\"test abc\",\"s_double\":0.1}," +
-                                "{\"s_string\":\"test xyz\",\"s_double\":0.2}]";
-                        assertEquals(row.getField(index), expectedJson);
+                        String expectedJson1 = "{\"s_string\":\"test abc\",\"s_double\":0.1}";
+                        String expectedJson2 = "{\"s_string\":\"test xyz\",\"s_double\":0.2}";
+                        assertEquals(row.getField(index), ImmutableList.of(expectedJson1, expectedJson2));
                     }
                 }
 
@@ -1375,10 +1395,9 @@ public abstract class AbstractTestHiveClient
                         assertNull(row.getField(index));
                     }
                     else {
-                        String expectedJson = "{\"1\":[" +
-                                "{\"s_string\":\"test abc\",\"s_double\":0.1}," +
-                                "{\"s_string\":\"test xyz\",\"s_double\":0.2}]}";
-                        assertEquals(row.getField(index), expectedJson);
+                        String expectedJson1 = "{\"s_string\":\"test abc\",\"s_double\":0.1}";
+                        String expectedJson2 = "{\"s_string\":\"test xyz\",\"s_double\":0.2}";
+                        assertEquals(row.getField(index), ImmutableMap.of(1L, ImmutableList.of(expectedJson1, expectedJson2)));
                     }
                 }
 
@@ -1435,37 +1454,35 @@ public abstract class AbstractTestHiveClient
         return splits.build();
     }
 
-    private static void assertRecordCursorType(RecordCursor cursor, String fileType)
+    private static void assertRecordCursorType(RecordCursor cursor, HiveStorageFormat hiveStorageFormat)
     {
-        assertInstanceOf(cursor, recordCursorType(fileType), fileType);
+        assertInstanceOf(cursor, recordCursorType(hiveStorageFormat), hiveStorageFormat.name());
     }
 
-    private static Class<? extends HiveRecordCursor> recordCursorType(String fileType)
+    private static Class<? extends HiveRecordCursor> recordCursorType(HiveStorageFormat hiveStorageFormat)
     {
-        switch (fileType) {
-            case "rcfile-text":
-            case "rctext":
+        switch (hiveStorageFormat) {
+            case RCTEXT:
                 return ColumnarTextHiveRecordCursor.class;
-            case "rcfile-binary":
-            case "rcbinary":
+            case RCBINARY:
                 return ColumnarBinaryHiveRecordCursor.class;
-            case "orc":
+            case ORC:
                 return OrcHiveRecordCursor.class;
-            case "parquet":
+            case PARQUET:
                 return ParquetHiveRecordCursor.class;
-            case "dwrf":
+            case DWRF:
                 return DwrfHiveRecordCursor.class;
         }
         return GenericHiveRecordCursor.class;
     }
 
-    private static void assertPageSourceType(ConnectorPageSource pageSource, String fileType)
+    private static void assertPageSourceType(ConnectorPageSource pageSource, HiveStorageFormat hiveStorageFormat)
     {
         if (pageSource instanceof RecordPageSource) {
-            assertRecordCursorType(((RecordPageSource) pageSource).getCursor(), fileType);
+            assertRecordCursorType(((RecordPageSource) pageSource).getCursor(), hiveStorageFormat);
         }
         else {
-            fail("Unexpected pageSource operator type for file type " + fileType);
+            fail("Unexpected pageSource operator type for file type " + hiveStorageFormat);
         }
     }
 
@@ -1495,6 +1512,12 @@ public abstract class AbstractTestHiveClient
                 }
                 else if (DATE.equals(column.getType())) {
                     assertInstanceOf(value, SqlDate.class);
+                }
+                else if (column.getType() instanceof ArrayType) {
+                    assertInstanceOf(value, List.class);
+                }
+                else if (column.getType() instanceof MapType) {
+                    assertInstanceOf(value, Map.class);
                 }
                 else {
                     fail("Unknown primitive type " + columnIndex);
@@ -1526,7 +1549,7 @@ public abstract class AbstractTestHiveClient
 
     private static String randomName()
     {
-        return UUID.randomUUID().toString().toLowerCase().replace("-", "");
+        return UUID.randomUUID().toString().toLowerCase(ENGLISH).replace("-", "");
     }
 
     private static Function<ColumnMetadata, String> columnNameGetter()

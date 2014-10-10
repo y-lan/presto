@@ -48,6 +48,7 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import io.airlift.units.DataSize;
 import io.airlift.units.DataSize.Unit;
@@ -61,7 +62,6 @@ import javax.annotation.concurrent.GuardedBy;
 import java.net.URI;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -136,9 +136,8 @@ public class TestSqlStageExecution
         SqlStageExecution sqlStageExecution1 = createSqlStageExecution(nodeScheduler, 2, 15);
         Future future1 = sqlStageExecution1.start();
         future1.get(1, TimeUnit.SECONDS);
-        Map<Node, RemoteTask> tasks1 = sqlStageExecution1.getTasks();
-        for (Map.Entry<Node, RemoteTask> entry : tasks1.entrySet()) {
-            assertEquals(entry.getValue().getPartitionedSplitCount(), 5);
+        for (RemoteTask remoteTask : sqlStageExecution1.getAllTasks()) {
+            assertEquals(remoteTask.getPartitionedSplitCount(), 5);
         }
 
         // Add new node
@@ -149,9 +148,9 @@ public class TestSqlStageExecution
         SqlStageExecution sqlStageExecution2 = createSqlStageExecution(nodeScheduler, 5, 5);
         Future future2 = sqlStageExecution2.start();
         future2.get(1, TimeUnit.SECONDS);
-        Map<Node, RemoteTask> tasks2 = sqlStageExecution2.getTasks();
+        List<RemoteTask> tasks2 = sqlStageExecution2.getTasks(additionalNode);
 
-        RemoteTask task = tasks2.get(additionalNode);
+        RemoteTask task = Iterables.getFirst(tasks2, null);
         assertNotNull(task);
         assertEquals(task.getPartitionedSplitCount(), 5);
     }
@@ -171,9 +170,8 @@ public class TestSqlStageExecution
         catch (TimeoutException e) {
         }
 
-        Map<Node, RemoteTask> tasks1 = sqlStageExecution1.getTasks();
-        for (Map.Entry<Node, RemoteTask> entry : tasks1.entrySet()) {
-            assertEquals(entry.getValue().getPartitionedSplitCount(), 20);
+        for (RemoteTask task : sqlStageExecution1.getAllTasks()) {
+            assertEquals(task.getPartitionedSplitCount(), 20);
         }
     }
 
@@ -363,7 +361,7 @@ public class TestSqlStageExecution
                 Multimap<PlanNodeId, Split> initialSplits,
                 OutputBuffers outputBuffers)
         {
-            return new MockRemoteTask(taskId, fragment, executor, initialSplits);
+            return new MockRemoteTask(taskId, node.getNodeIdentifier(), fragment, executor, initialSplits);
         }
 
         private static class MockRemoteTask
@@ -375,6 +373,7 @@ public class TestSqlStageExecution
             private final TaskStateMachine taskStateMachine;
             private final TaskContext taskContext;
             private final SharedBuffer sharedBuffer;
+            private final String nodeId;
 
             private final PlanFragment fragment;
 
@@ -385,6 +384,7 @@ public class TestSqlStageExecution
             private final Multimap<PlanNodeId, Split> splits = HashMultimap.create();
 
             public MockRemoteTask(TaskId taskId,
+                    String nodeId,
                     PlanFragment fragment,
                     Executor executor,
                     Multimap<PlanNodeId, Split> initialSplits)
@@ -397,13 +397,14 @@ public class TestSqlStageExecution
 
                 this.sharedBuffer = new SharedBuffer(taskId, executor, checkNotNull(new DataSize(1, Unit.BYTE), "maxBufferSize is null"));
                 this.fragment = checkNotNull(fragment, "fragment is null");
+                this.nodeId = nodeId;
                 splits.putAll(initialSplits);
             }
 
             @Override
             public String getNodeId()
             {
-                return "node";
+                return nodeId;
             }
 
             @Override

@@ -46,6 +46,7 @@ import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.type.ArrayParametricType.ARRAY;
 import static com.facebook.presto.type.ColorType.COLOR;
 import static com.facebook.presto.type.JsonPathType.JSON_PATH;
+import static com.facebook.presto.type.JsonType.JSON;
 import static com.facebook.presto.type.LikePatternType.LIKE_PATTERN;
 import static com.facebook.presto.type.MapParametricType.MAP;
 import static com.facebook.presto.type.RegexpType.REGEXP;
@@ -53,6 +54,7 @@ import static com.facebook.presto.type.UnknownType.UNKNOWN;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Locale.ENGLISH;
 
 @ThreadSafe
 public final class TypeRegistry
@@ -72,7 +74,7 @@ public final class TypeRegistry
         checkNotNull(types, "types is null");
 
         // Manually register UNKNOWN type without a verifyTypeClass call since it is a special type that can not be used by functions
-        this.types.put(UNKNOWN.getName().toLowerCase(), UNKNOWN);
+        this.types.put(UNKNOWN.getName().toLowerCase(ENGLISH), UNKNOWN);
 
         // always add the built-in types; Presto will not function without these
         addType(BOOLEAN);
@@ -92,6 +94,7 @@ public final class TypeRegistry
         addType(LIKE_PATTERN);
         addType(JSON_PATH);
         addType(COLOR);
+        addType(JSON);
         addParametricType(ARRAY);
         addParametricType(MAP);
 
@@ -103,7 +106,7 @@ public final class TypeRegistry
     @Override
     public Type getType(String typeName)
     {
-        String key = typeName.toLowerCase();
+        String key = typeName.toLowerCase(ENGLISH);
         Type type = types.get(key);
         if (type == null) {
             instantiateParametricType(key);
@@ -119,11 +122,11 @@ public final class TypeRegistry
             @Override
             public String apply(String input)
             {
-                return input.toLowerCase();
+                return input.toLowerCase(ENGLISH);
             }
         }).toList();
 
-        return getType(parametricTypeName.toLowerCase() + "<" + Joiner.on(",").join(lowerCaseTypeNames) + ">");
+        return getType(parametricTypeName.toLowerCase(ENGLISH) + "<" + Joiner.on(",").join(lowerCaseTypeNames) + ">");
     }
 
     private synchronized void instantiateParametricType(String typeName)
@@ -155,7 +158,7 @@ public final class TypeRegistry
     public void addType(Type type)
     {
         verifyTypeClass(type);
-        Type existingType = types.putIfAbsent(type.getName().toLowerCase(), type);
+        Type existingType = types.putIfAbsent(type.getName().toLowerCase(ENGLISH), type);
         checkState(existingType == null || existingType.equals(type), "Type %s is already registered", type.getName());
     }
 

@@ -26,6 +26,7 @@ import com.facebook.presto.metadata.TypeParameter;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.facebook.presto.sql.gen.ByteCodeUtils;
+import com.facebook.presto.type.ArrayType;
 import com.facebook.presto.type.MapType;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
@@ -38,7 +39,7 @@ import io.airlift.slice.Slice;
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Method;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -99,7 +100,7 @@ public final class MapConstructor
     }
 
     @Override
-    public FunctionInfo specialize(Map<String, Type> types, int arity)
+    public FunctionInfo specialize(Map<String, Type> types, int arity, TypeManager typeManager)
     {
         Type keyType = types.get("K");
         Type valueType = types.get("V");
@@ -123,7 +124,7 @@ public final class MapConstructor
             }
         }
         ImmutableList<Class<?>> stackTypes = builder.build();
-        Class<?> clazz = generateMapConstructor(stackTypes);
+        Class<?> clazz = generateMapConstructor(stackTypes, valueType);
         MethodHandle methodHandle;
         try {
             Method method = clazz.getMethod("mapConstructor", stackTypes.toArray(new Class<?>[stackTypes.size()]));
@@ -132,13 +133,13 @@ public final class MapConstructor
         catch (NoSuchMethodException | IllegalAccessException e) {
             throw Throwables.propagate(e);
         }
-        Type mapType = typeManager.getParameterizedType(MAP.getName(), ImmutableList.of(keyType.getName(), valueType.getName()));
+        Type mapType = this.typeManager.getParameterizedType(MAP.getName(), ImmutableList.of(keyType.getName(), valueType.getName()));
         Signature signature = new Signature("map", ImmutableList.<TypeParameter>of(), mapType.getName(), actualArgumentNames.build(), false, true);
         List<Boolean> nullableParameters = ImmutableList.copyOf(Collections.nCopies(stackTypes.size(), true));
         return new FunctionInfo(signature, "Constructs a map of the given entries", true, methodHandle, true, false, nullableParameters);
     }
 
-    private static Class<?> generateMapConstructor(List<Class<?>> stackTypes)
+    private static Class<?> generateMapConstructor(List<Class<?>> stackTypes, Type valueType)
     {
         List<String> stackTypeNames = FluentIterable.from(stackTypes).transform(new Function<Class<?>, String>() {
             @Override
@@ -168,10 +169,10 @@ public final class MapConstructor
                 .getBody();
 
         Variable valuesVariable = context.declareVariable(Map.class, "values");
-        body.comment("Map<Object, Object> values = new HashMap();")
-                .newObject(HashMap.class)
+        body.comment("Map<Object, Object> values = new LinkedHashMap();")
+                .newObject(LinkedHashMap.class)
                 .dup()
-                .invokeConstructor(HashMap.class)
+                .invokeConstructor(LinkedHashMap.class)
                 .putVariable(valuesVariable);
 
         for (int i = 0; i < stackTypes.size(); i += 2) {
@@ -190,10 +191,18 @@ public final class MapConstructor
             body.invokeInterface(Map.class, "put", Object.class, Object.class, Object.class);
         }
 
-        body.comment("return toStackRepresentation(values);")
-                .getVariable(valuesVariable)
-                .invokeStatic(MapType.class, "toStackRepresentation", Slice.class, Map.class)
-                .retObject();
+        if (valueType instanceof ArrayType || valueType instanceof MapType) {
+            body.comment("return rawValueSlicesToStackRepresentation(values);")
+                    .getVariable(valuesVariable)
+                    .invokeStatic(MapType.class, "rawValueSlicesToStackRepresentation", Slice.class, Map.class)
+                    .retObject();
+        }
+        else {
+            body.comment("return toStackRepresentation(values);")
+                    .getVariable(valuesVariable)
+                    .invokeStatic(MapType.class, "toStackRepresentation", Slice.class, Map.class)
+                    .retObject();
+        }
 
         return defineClass(definition, Object.class, new DynamicClassLoader());
     }

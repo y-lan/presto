@@ -17,6 +17,7 @@ import com.facebook.presto.metadata.FunctionInfo;
 import com.facebook.presto.metadata.OperatorType;
 import com.facebook.presto.metadata.ParametricOperator;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.collect.ImmutableList;
 
 import java.lang.invoke.MethodHandle;
@@ -38,14 +39,7 @@ public class IdentityCast
     }
 
     @Override
-    public String getDescription()
-    {
-        // Internal function, so it doesn't need one
-        return "";
-    }
-
-    @Override
-    public FunctionInfo specialize(Map<String, Type> types, int arity)
+    public FunctionInfo specialize(Map<String, Type> types, int arity, TypeManager typeManager)
     {
         checkArgument(types.size() == 1, "Expected only one type");
         Type type = types.get("T");

@@ -33,6 +33,7 @@ import io.airlift.units.Duration;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -40,8 +41,10 @@ import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -69,6 +72,7 @@ public class Validator
     private final boolean checkCorrectness;
     private final boolean verboseResultsComparison;
     private final QueryPair queryPair;
+    private final boolean explainOnly;
 
     private Boolean valid;
 
@@ -89,6 +93,7 @@ public class Validator
         this.controlTimeout = config.getControlTimeout();
         this.testTimeout = config.getTestTimeout();
         this.maxRowCount = config.getMaxRowCount();
+        this.explainOnly = config.isExplainOnly();
         // Check if either the control query or the test query matches the regex
         if (Pattern.matches(config.getSkipCorrectnessRegex(), queryPair.getTest().getQuery()) ||
                 Pattern.matches(config.getSkipCorrectnessRegex(), queryPair.getControl().getQuery())) {
@@ -248,7 +253,11 @@ public class Validator
                 TimeLimiter limiter = new SimpleTimeLimiter();
                 Stopwatch stopwatch = Stopwatch.createStarted();
                 Statement limitedStatement = limiter.newProxy(statement, Statement.class, timeout.toMillis(), TimeUnit.MILLISECONDS);
-                try (final ResultSet resultSet = limitedStatement.executeQuery(query.getQuery())) {
+                String sql = query.getQuery();
+                if (explainOnly) {
+                    sql = "EXPLAIN " + sql;
+                }
+                try (final ResultSet resultSet = limitedStatement.executeQuery(sql)) {
                     List<List<Object>> results = limiter.callWithTimeout(getResultSetConverter(resultSet), timeout.toMillis() - stopwatch.elapsed(TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS, true);
                     return new QueryResult(State.SUCCESS, null, nanosSince(start), results);
                 }
@@ -348,6 +357,9 @@ public class Validator
                     else {
                         object = ((BigDecimal) object).doubleValue();
                     }
+                }
+                if (object instanceof Array) {
+                    object = ((Array) object).getArray();
                 }
                 row.add(object);
 
@@ -454,6 +466,18 @@ public class Validator
                 }
                 if (a.getClass() != b.getClass()) {
                     throw new TypesDoNotMatchException(format("item types do not match: %s vs %s", a.getClass().getName(), b.getClass().getName()));
+                }
+                if ((a.getClass().isArray() && b.getClass().isArray())) {
+                    if (Arrays.deepEquals((Object[]) a, (Object[]) b)) {
+                        return 0;
+                    }
+                    return Arrays.hashCode((Object[]) a) < Arrays.hashCode((Object[]) b) ? -1 : 1;
+                }
+                if ((a instanceof Map && b instanceof Map)) {
+                    if (a.equals(b)) {
+                        return 0;
+                    }
+                    return a.hashCode() < b.hashCode() ? -1 : 1;
                 }
                 checkArgument(a instanceof Comparable, "item is not Comparable: %s", a.getClass().getName());
                 return ((Comparable<Object>) a).compareTo(b);
