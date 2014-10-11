@@ -20,7 +20,9 @@ import com.alibaba.fastjson.parser.Feature;
 import com.facebook.presto.metadata.OperatorType;
 import com.facebook.presto.operator.Description;
 import com.facebook.presto.spi.type.StandardTypes;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.type.JsonPathType;
+import com.facebook.presto.type.MapType;
 import com.facebook.presto.type.SqlType;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
@@ -405,7 +407,7 @@ public final class JsonFunctions
     @Description("fast json extract: json_get(JSON_OBJECT, 'key') or json_get(JSON_ARRAY, '[index]')")
     @Nullable
     @SqlType(StandardTypes.VARCHAR)
-    public static Slice jsonGet(@SqlType(StandardTypes.VARCHAR) Slice json, @SqlType(StandardTypes.VARCHAR) Slice key)
+    public static Slice jsonGet(@SqlType(StandardTypes.JSON) Slice json, @SqlType(StandardTypes.VARCHAR) Slice key)
     {
         try {
             String k = key.toStringUtf8();
@@ -435,11 +437,36 @@ public final class JsonFunctions
         }
     }
 
+    @ScalarFunction("json_get")
+    @Description("fast json extract: json_get(JSON_OBJECT, 'key') or json_get(JSON_ARRAY, '[index]')")
+    @Nullable
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice varcharJsonGet(@SqlType(StandardTypes.VARCHAR) Slice json, @SqlType(StandardTypes.VARCHAR) Slice key)
+    {
+        return jsonGet(json, key);
+    }
+
+    @ScalarFunction("to_json")
+    @Nullable
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice varcharToJson(@SqlType(StandardTypes.VARCHAR) Slice json)
+    {
+        return json;
+    }
+
+    @ScalarFunction("to_json")
+    @Nullable
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice jsonToJson(@SqlType(StandardTypes.JSON) Slice json)
+    {
+        return json;
+    }
+
     @ScalarFunction
     @Nullable
     @SqlType(StandardTypes.VARCHAR)
-    public static Slice toJson(@SqlType(StandardTypes.VARCHAR) Slice json)
+    public static Slice toJson(@SqlType("map<varchar,varchar>") Slice slice)
     {
-        return json;
+        return MapToJsonCast.MAP_TO_JSON.toJson(new MapType(new VarcharType(), new VarcharType()), null, slice);
     }
 }
