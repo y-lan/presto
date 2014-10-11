@@ -13,6 +13,8 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hive.rcfile.RcFilePageSourceFactory;
+import com.facebook.presto.spi.ConnectorPageSource;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.spi.type.TimeZoneKey;
@@ -41,7 +43,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.mapred.FileSplit;
 import org.apache.hadoop.mapred.InputFormat;
 import org.joda.time.DateTimeZone;
-import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.io.File;
@@ -53,6 +55,7 @@ import java.util.TimeZone;
 import static com.facebook.presto.hive.AbstractTestHiveFileFormats.TestColumn.nameGetter;
 import static com.facebook.presto.hive.AbstractTestHiveFileFormats.TestColumn.partitionKeyFilter;
 import static com.facebook.presto.hive.AbstractTestHiveFileFormats.TestColumn.typeGetter;
+import static com.facebook.presto.hive.HiveTestUtils.getTypes;
 import static com.google.common.base.Predicates.not;
 import static com.google.common.collect.Iterables.filter;
 import static com.google.common.collect.Iterables.transform;
@@ -68,8 +71,8 @@ public class TestHiveFileFormats
     private static final ConnectorSession SESSION = new ConnectorSession("user", TIME_ZONE_KEY, ENGLISH, System.currentTimeMillis(), null);
     private static final TypeRegistry TYPE_MANAGER = new TypeRegistry();
 
-    @BeforeMethod(alwaysRun = true)
-    public void setup()
+    @BeforeClass(alwaysRun = true)
+    public void setUp()
             throws Exception
     {
         // ensure the expected timezone is configured for this VM
@@ -99,6 +102,26 @@ public class TestHiveFileFormats
     }
 
     @Test
+    public void testRcTextPageSource()
+            throws Exception
+    {
+        HiveOutputFormat<?, ?> outputFormat = new RCFileOutputFormat();
+        InputFormat<?, ?> inputFormat = new RCFileInputFormat<>();
+        @SuppressWarnings("deprecation")
+        SerDe serde = new ColumnarSerDe();
+        File file = File.createTempFile("presto_test", "rc-binary");
+        file.delete();
+        try {
+            FileSplit split = createTestFile(file.getAbsolutePath(), outputFormat, serde, null, TEST_COLUMNS);
+            testPageSourceFactory(new RcFilePageSourceFactory(TYPE_MANAGER), split, inputFormat, serde, TEST_COLUMNS);
+        }
+        finally {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
+
+    @Test
     public void testRCBinary()
             throws Exception
     {
@@ -111,6 +134,25 @@ public class TestHiveFileFormats
             FileSplit split = createTestFile(file.getAbsolutePath(), outputFormat, serde, null, TEST_COLUMNS);
             testCursorProvider(new ColumnarBinaryHiveRecordCursorProvider(), split, inputFormat, serde, TEST_COLUMNS);
             testCursorProvider(new GenericHiveRecordCursorProvider(), split, inputFormat, serde, TEST_COLUMNS);
+        }
+        finally {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
+
+    public void testRcBinaryPageSource()
+            throws Exception
+    {
+        HiveOutputFormat<?, ?> outputFormat = new RCFileOutputFormat();
+        InputFormat<?, ?> inputFormat = new RCFileInputFormat<>();
+        @SuppressWarnings("deprecation")
+        SerDe serde = new LazyBinaryColumnarSerDe();
+        File file = File.createTempFile("presto_test", "rc-binary");
+        file.delete();
+        try {
+            FileSplit split = createTestFile(file.getAbsolutePath(), outputFormat, serde, null, TEST_COLUMNS);
+            testPageSourceFactory(new RcFilePageSourceFactory(TYPE_MANAGER), split, inputFormat, serde, TEST_COLUMNS);
         }
         finally {
             //noinspection ResultOfMethodCallIgnored
@@ -243,6 +285,41 @@ public class TestHiveFileFormats
                 TYPE_MANAGER).get();
 
         checkCursor(cursor, testColumns);
+    }
+
+    private void testPageSourceFactory(HivePageSourceFactory sourceFactory, FileSplit split, InputFormat<?, ?> inputFormat, SerDe serde, List<TestColumn> testColumns)
+            throws IOException
+    {
+        Properties splitProperties = new Properties();
+        splitProperties.setProperty(FILE_INPUT_FORMAT, inputFormat.getClass().getName());
+        splitProperties.setProperty(SERIALIZATION_LIB, serde.getClass().getName());
+        splitProperties.setProperty("columns", Joiner.on(',').join(transform(filter(testColumns, not(partitionKeyFilter())), nameGetter())));
+        splitProperties.setProperty("columns.types", Joiner.on(',').join(transform(filter(testColumns, not(partitionKeyFilter())), typeGetter())));
+
+        List<HivePartitionKey> partitionKeys = ImmutableList.copyOf(transform(filter(testColumns, partitionKeyFilter()), new Function<TestColumn, HivePartitionKey>() {
+            @Override
+            public HivePartitionKey apply(TestColumn input)
+            {
+                return new HivePartitionKey(input.getName(), HiveType.getHiveType(input.getObjectInspector()), (String) input.getWriteValue());
+            }
+        }));
+
+        List<HiveColumnHandle> columnHandles = getColumnHandles(testColumns);
+
+        ConnectorPageSource pageSource = sourceFactory.createPageSource(
+                new Configuration(),
+                SESSION,
+                split.getPath(),
+                split.getStart(),
+                split.getLength(),
+                splitProperties,
+                columnHandles,
+                partitionKeys,
+                TupleDomain.<HiveColumnHandle>all(),
+                DateTimeZone.getDefault()
+        ).get();
+
+        checkPageSource(pageSource, testColumns, getTypes(columnHandles));
     }
 
     private static boolean hasType(ObjectInspector objectInspector, PrimitiveCategory... types)
