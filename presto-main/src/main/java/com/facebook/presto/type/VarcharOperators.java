@@ -17,6 +17,7 @@ import com.facebook.presto.operator.scalar.ScalarOperator;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.type.StandardTypes;
 import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 
 import static com.facebook.presto.metadata.OperatorType.BETWEEN;
 import static com.facebook.presto.metadata.OperatorType.CAST;
@@ -42,6 +43,20 @@ public final class VarcharOperators
     public static boolean equal(@SqlType(StandardTypes.VARCHAR) Slice left, @SqlType(StandardTypes.VARCHAR) Slice right)
     {
         return left.equals(right);
+    }
+
+    @ScalarOperator(EQUAL)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean equal(@SqlType(StandardTypes.VARCHAR) Slice left, @SqlType(StandardTypes.BIGINT) long right)
+    {
+        return left.equals(Slices.utf8Slice(String.valueOf(right)));
+    }
+
+    @ScalarOperator(EQUAL)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean equal(@SqlType(StandardTypes.BIGINT) long left, @SqlType(StandardTypes.VARCHAR) Slice right)
+    {
+        return right.equals(Slices.utf8Slice(String.valueOf(left)));
     }
 
     @ScalarOperator(NOT_EQUAL)
