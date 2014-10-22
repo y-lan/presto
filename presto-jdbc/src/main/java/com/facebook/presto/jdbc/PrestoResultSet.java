@@ -17,6 +17,8 @@ import com.facebook.presto.client.Column;
 import com.facebook.presto.client.QueryError;
 import com.facebook.presto.client.QueryResults;
 import com.facebook.presto.client.StatementClient;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
@@ -129,6 +131,8 @@ public class PrestoResultSet
     private final ResultSetMetaData resultSetMetaData;
     private final AtomicReference<List<Object>> row = new AtomicReference<>();
     private final AtomicBoolean wasNull = new AtomicBoolean();
+
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     PrestoResultSet(StatementClient client)
             throws SQLException
@@ -548,6 +552,14 @@ public class PrestoResultSet
                 }
                 else if (columnInfo.getColumnTypeName().equalsIgnoreCase("interval day to second")) {
                     return getIntervalDayTime(columnIndex);
+                }
+                else if (columnInfo.getColumnTypeName().toLowerCase().startsWith("map<")) {
+                    try {
+                        return mapper.writeValueAsString(column(columnIndex));
+                    }
+                    catch (JsonProcessingException e) {
+                        return "{}";
+                    }
                 }
         }
         return column(columnIndex);
