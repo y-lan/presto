@@ -15,6 +15,7 @@ package com.facebook.presto.operator.scalar;
 
 import com.facebook.presto.operator.Description;
 import com.facebook.presto.spi.type.StandardTypes;
+import com.facebook.presto.type.ArrayType;
 import com.facebook.presto.type.SqlType;
 import com.google.common.base.Ascii;
 import com.google.common.base.Charsets;
@@ -25,6 +26,9 @@ import javax.annotation.Nullable;
 
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -189,6 +193,14 @@ public final class StringFunctions
 
         // index is too big, null is returned
         return null;
+    }
+
+    @Description("splits a string to array<varchar> by a delimiter")
+    @ScalarFunction
+    @SqlType("array<varchar>")
+    public static Slice split(@SqlType(StandardTypes.VARCHAR) Slice string, @SqlType(StandardTypes.VARCHAR) Slice delimiter)
+    {
+        return ArrayType.toStackRepresentation(Arrays.asList(string.toStringUtf8().split(delimiter.toStringUtf8())));
     }
 
     @Description("removes spaces from the beginning of a string")
