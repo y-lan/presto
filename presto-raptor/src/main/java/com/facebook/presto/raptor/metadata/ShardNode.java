@@ -21,7 +21,7 @@ import java.sql.SQLException;
 import java.util.Objects;
 import java.util.UUID;
 
-import static com.facebook.presto.raptor.util.UuidArguments.uuidFromBytes;
+import static com.facebook.presto.raptor.util.UuidUtil.uuidFromBytes;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkNotNull;
 
