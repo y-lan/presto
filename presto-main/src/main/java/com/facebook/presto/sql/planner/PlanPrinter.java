@@ -39,7 +39,7 @@ import com.facebook.presto.sql.planner.plan.PlanFragmentId;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.PlanVisitor;
 import com.facebook.presto.sql.planner.plan.ProjectNode;
-import com.facebook.presto.sql.planner.plan.RowNumberLimitNode;
+import com.facebook.presto.sql.planner.plan.RowNumberNode;
 import com.facebook.presto.sql.planner.plan.SampleNode;
 import com.facebook.presto.sql.planner.plan.SemiJoinNode;
 import com.facebook.presto.sql.planner.plan.SinkNode;
@@ -66,6 +66,7 @@ import com.google.common.base.Optional;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -75,6 +76,7 @@ import java.lang.invoke.MethodHandle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.planner.DomainUtils.simplifyDomain;
@@ -321,15 +323,19 @@ public class PlanPrinter
         }
 
         @Override
-        public Void visitRowNumberLimit(final RowNumberLimitNode node, Integer indent)
+        public Void visitRowNumber(final RowNumberNode node, Integer indent)
         {
             List<String> partitionBy = Lists.transform(node.getPartitionBy(), Functions.toStringFunction());
             List<String> args = new ArrayList<>();
             if (!partitionBy.isEmpty()) {
-                args.add(format("partition by (%s)", Joiner.on(", ").join(partitionBy)));
+                args.add(format("partition by (%s) ", Joiner.on(", ").join(partitionBy)));
             }
 
-            print(indent, "- RowNumberLimit[%s limit=%s] => [%s]", Joiner.on(", ").join(args), node.getMaxRowCountPerPartition(), formatOutputs(node.getOutputSymbols()));
+            if (node.getMaxRowCountPerPartition().isPresent()) {
+                args.add(format("limit (%s) ", node.getMaxRowCountPerPartition().get()));
+            }
+
+            print(indent, "- RowNumber[%s] => [%s]", Joiner.on(", ").join(args), formatOutputs(node.getOutputSymbols()));
 
             print(indent + 2, "%s := %s", node.getRowNumberSymbol(), "row_number()");
             return processChildren(node, indent + 1);
@@ -340,8 +346,10 @@ public class PlanPrinter
         {
             TupleDomain<ColumnHandle> partitionsDomainSummary = node.getPartitionsDomainSummary();
             print(indent, "- TableScan[%s, original constraint=%s] => [%s]", node.getTable(), node.getOriginalConstraint(), formatOutputs(node.getOutputSymbols()));
+
+            Set<Symbol> outputs = ImmutableSet.copyOf(node.getOutputSymbols());
             for (Map.Entry<Symbol, ColumnHandle> entry : node.getAssignments().entrySet()) {
-                boolean isOutputSymbol = node.getOutputSymbols().contains(entry.getKey());
+                boolean isOutputSymbol = outputs.contains(entry.getKey());
                 boolean isInOriginalConstraint = node.getOriginalConstraint() == null ? false : DependencyExtractor.extractUnique(node.getOriginalConstraint()).contains(entry.getKey());
                 boolean isInDomainSummary = !partitionsDomainSummary.isNone() && partitionsDomainSummary.getDomains().keySet().contains(entry.getValue());
 
@@ -379,7 +387,7 @@ public class PlanPrinter
         public Void visitProject(ProjectNode node, Integer indent)
         {
             print(indent, "- Project => [%s]", formatOutputs(node.getOutputSymbols()));
-            for (Map.Entry<Symbol, Expression> entry : node.getOutputMap().entrySet()) {
+            for (Map.Entry<Symbol, Expression> entry : node.getAssignments().entrySet()) {
                 if (entry.getValue() instanceof QualifiedNameReference && ((QualifiedNameReference) entry.getValue()).getName().equals(entry.getKey().toQualifiedName())) {
                     // skip identity assignments
                     continue;

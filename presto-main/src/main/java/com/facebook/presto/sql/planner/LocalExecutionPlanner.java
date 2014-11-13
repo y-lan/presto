@@ -46,7 +46,7 @@ import com.facebook.presto.operator.PageProcessor;
 import com.facebook.presto.operator.ProjectionFunction;
 import com.facebook.presto.operator.ProjectionFunctions;
 import com.facebook.presto.operator.RecordSinkManager;
-import com.facebook.presto.operator.RowNumberLimitOperator;
+import com.facebook.presto.operator.RowNumberOperator;
 import com.facebook.presto.operator.SampleOperator.SampleOperatorFactory;
 import com.facebook.presto.operator.ScanFilterAndProjectOperator;
 import com.facebook.presto.operator.SetBuilderOperator.SetBuilderOperatorFactory;
@@ -67,6 +67,7 @@ import com.facebook.presto.operator.index.IndexLookupSourceSupplier;
 import com.facebook.presto.operator.index.IndexSourceOperator;
 import com.facebook.presto.spi.Index;
 import com.facebook.presto.spi.PageBuilder;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.RecordSet;
 import com.facebook.presto.spi.RecordSink;
 import com.facebook.presto.spi.block.SortOrder;
@@ -89,7 +90,7 @@ import com.facebook.presto.sql.planner.plan.OutputNode;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.PlanVisitor;
 import com.facebook.presto.sql.planner.plan.ProjectNode;
-import com.facebook.presto.sql.planner.plan.RowNumberLimitNode;
+import com.facebook.presto.sql.planner.plan.RowNumberNode;
 import com.facebook.presto.sql.planner.plan.SampleNode;
 import com.facebook.presto.sql.planner.plan.SemiJoinNode;
 import com.facebook.presto.sql.planner.plan.SinkNode;
@@ -151,6 +152,7 @@ import static com.facebook.presto.operator.TableCommitOperator.TableCommitOperat
 import static com.facebook.presto.operator.TableCommitOperator.TableCommitter;
 import static com.facebook.presto.operator.TableWriterOperator.TableWriterOperatorFactory;
 import static com.facebook.presto.operator.UnnestOperator.UnnestOperatorFactory;
+import static com.facebook.presto.spi.StandardErrorCode.COMPILER_ERROR;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypes;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypesFromInput;
 import static com.facebook.presto.sql.planner.plan.IndexJoinNode.EquiJoinClause.indexGetter;
@@ -184,6 +186,7 @@ public class LocalExecutionPlanner
     private final boolean interpreterEnabled;
     private final DataSize maxIndexMemorySize;
     private final IndexJoinLookupStats indexJoinLookupStats;
+    private final DataSize maxPartialAggregationMemorySize;
 
     @Inject
     public LocalExecutionPlanner(
@@ -208,6 +211,7 @@ public class LocalExecutionPlanner
         this.compiler = checkNotNull(compiler, "compiler is null");
         this.indexJoinLookupStats = checkNotNull(indexJoinLookupStats, "indexJoinLookupStats is null");
         this.maxIndexMemorySize = checkNotNull(taskManagerConfig, "taskManagerConfig is null").getMaxTaskIndexMemoryUsage();
+        this.maxPartialAggregationMemorySize = taskManagerConfig.getMaxPartialAggregationMemoryUsage();
 
         interpreterEnabled = compilerConfig.isInterpreterEnabled();
     }
@@ -390,7 +394,7 @@ public class LocalExecutionPlanner
         }
 
         @Override
-        public PhysicalOperation visitRowNumberLimit(RowNumberLimitNode node, LocalExecutionPlanContext context)
+        public PhysicalOperation visitRowNumber(RowNumberNode node, LocalExecutionPlanContext context)
         {
             final PhysicalOperation source = node.getSource().accept(this, context);
 
@@ -418,14 +422,14 @@ public class LocalExecutionPlanner
             int channel = source.getTypes().size();
             outputMappings.put(node.getRowNumberSymbol(), channel);
 
-            OperatorFactory operatorFactory = new RowNumberLimitOperator.RowNumberLimitOperatorFactory(
+            OperatorFactory operatorFactory = new RowNumberOperator.RowNumberOperatorFactory(
                     context.getNextOperatorId(),
                     source.getTypes(),
                     outputChannels.build(),
                     partitionChannels,
                     partitionTypes,
-                    1_000_000,
-                    node.getMaxRowCountPerPartition());
+                    node.getMaxRowCountPerPartition(),
+                    1_000_000);
             return new PhysicalOperation(operatorFactory, outputMappings.build(), source);
         }
 
@@ -461,6 +465,16 @@ public class LocalExecutionPlanner
                 outputChannels.add(i);
             }
 
+            // compute the layout of the output from the window operator
+            ImmutableMap.Builder<Symbol, Integer> outputMappings = ImmutableMap.builder();
+            outputMappings.putAll(source.getLayout());
+
+            if (!node.isPartial() || !partitionChannels.isEmpty()) {
+                // row number function goes in the last channel
+                int channel = source.getTypes().size();
+                outputMappings.put(node.getRowNumberSymbol(), channel);
+            }
+
             OperatorFactory operatorFactory = new TopNRowNumberOperator.TopNRowNumberOperatorFactory(
                     context.getNextOperatorId(),
                     source.getTypes(),
@@ -470,6 +484,7 @@ public class LocalExecutionPlanner
                     sortChannels,
                     sortOrder,
                     node.getMaxRowCountPerPartition(),
+                    node.isPartial(),
                     1_000_000);
 
             return new PhysicalOperation(operatorFactory, makeLayout(node), source);
@@ -794,7 +809,7 @@ public class LocalExecutionPlanner
             }
             catch (RuntimeException e) {
                 if (!interpreterEnabled) {
-                    throw e;
+                    throw new PrestoException(COMPILER_ERROR, "Compiler failed and interpreter is disabled", e);
                 }
 
                 // compilation failed, use interpreter
@@ -1475,7 +1490,8 @@ public class LocalExecutionPlanner
                     groupByChannels,
                     node.getStep(),
                     accumulatorFactories,
-                    10_000);
+                    10_000,
+                    maxPartialAggregationMemorySize);
 
             return new PhysicalOperation(operatorFactory, outputMappings.build(), source);
         }

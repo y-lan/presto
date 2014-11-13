@@ -64,6 +64,7 @@ public class OperatorContext
     private final CounterStat outputDataSize = new CounterStat();
     private final CounterStat outputPositions = new CounterStat();
 
+    private final AtomicReference<BlockedMonitor> blockedMonitor = new AtomicReference<>();
     private final AtomicLong blockedWallNanos = new AtomicLong();
 
     private final AtomicLong finishCalls = new AtomicLong();
@@ -72,16 +73,21 @@ public class OperatorContext
     private final AtomicLong finishUserNanos = new AtomicLong();
 
     private final AtomicLong memoryReservation = new AtomicLong();
+    private final long maxMemoryReservation;
 
     private final AtomicReference<Supplier<Object>> infoSupplier = new AtomicReference<>();
+    private final boolean collectTimings;
 
-    public OperatorContext(int operatorId, String operatorType, DriverContext driverContext, Executor executor)
+    public OperatorContext(int operatorId, String operatorType, DriverContext driverContext, Executor executor, long maxMemoryReservation)
     {
         checkArgument(operatorId >= 0, "operatorId is negative");
         this.operatorId = operatorId;
+        this.maxMemoryReservation = maxMemoryReservation;
         this.operatorType = checkNotNull(operatorType, "operatorType is null");
         this.driverContext = checkNotNull(driverContext, "driverContext is null");
         this.executor = checkNotNull(executor, "executor is null");
+
+        collectTimings = driverContext.isVerboseStats() && driverContext.isCpuTimerEnabled();
     }
 
     public int getOperatorId()
@@ -168,16 +174,16 @@ public class OperatorContext
     public void recordBlocked(ListenableFuture<?> blocked)
     {
         checkNotNull(blocked, "blocked is null");
-        blocked.addListener(new Runnable()
-        {
-            private final long start = System.nanoTime();
 
-            @Override
-            public void run()
-            {
-                blockedWallNanos.getAndAdd(nanosBetween(start, System.nanoTime()));
-            }
-        }, executor);
+        BlockedMonitor monitor = new BlockedMonitor();
+
+        BlockedMonitor oldMonitor = blockedMonitor.getAndSet(monitor);
+        if (oldMonitor != null) {
+            oldMonitor.run();
+        }
+
+        blocked.addListener(monitor, executor);
+        driverContext.recordBlocked(blocked);
     }
 
     public void recordFinish()
@@ -200,9 +206,14 @@ public class OperatorContext
 
     public boolean reserveMemory(long bytes)
     {
+        long newReservation = memoryReservation.getAndAdd(bytes);
+        if (newReservation > maxMemoryReservation) {
+            memoryReservation.getAndAdd(-bytes);
+            return false;
+        }
         boolean result = driverContext.reserveMemory(bytes);
-        if (result) {
-            memoryReservation.getAndAdd(bytes);
+        if (!result) {
+            memoryReservation.getAndAdd(-bytes);
         }
         return result;
     }
@@ -292,7 +303,7 @@ public class OperatorContext
 
     private long currentThreadUserTime()
     {
-        if (!driverContext.isCpuTimerEnabled()) {
+        if (!collectTimings) {
             return 0;
         }
         return THREAD_MX_BEAN.getCurrentThreadUserTime();
@@ -300,7 +311,7 @@ public class OperatorContext
 
     private long currentThreadCpuTime()
     {
-        if (!driverContext.isCpuTimerEnabled()) {
+        if (!collectTimings) {
             return 0;
         }
         return THREAD_MX_BEAN.getCurrentThreadCpuTime();
@@ -321,5 +332,30 @@ public class OperatorContext
                 return operatorContext.getOperatorStats();
             }
         };
+    }
+
+    private class BlockedMonitor
+            implements Runnable
+    {
+        private final long start = System.nanoTime();
+        private boolean finished;
+
+        @Override
+        public synchronized void run()
+        {
+            synchronized (this) {
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                blockedMonitor.compareAndSet(this, null);
+                blockedWallNanos.getAndAdd(getBlockedTime());
+            }
+        }
+
+        public long getBlockedTime()
+        {
+            return nanosBetween(start, System.nanoTime());
+        }
     }
 }

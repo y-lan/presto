@@ -14,7 +14,6 @@
 package com.facebook.presto.td;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.common.io.ByteStreams;
 import com.google.common.io.Resources;
 import com.google.inject.Binder;
 import com.google.inject.Injector;
@@ -89,7 +88,7 @@ public class TdJobHttpServer
                 throws IOException
         {
             URL dataUrl = Resources.getResource(TestTdJobClient.class, request.getPathInfo());
-            ByteStreams.copy(Resources.newInputStreamSupplier(dataUrl), response.getOutputStream());
+            Resources.asByteSource(dataUrl).copyTo(response.getOutputStream());
         }
     }
 }

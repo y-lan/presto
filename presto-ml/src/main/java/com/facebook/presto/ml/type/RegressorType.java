@@ -13,7 +13,7 @@
  */
 package com.facebook.presto.ml.type;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
+import static com.facebook.presto.type.TypeUtils.parameterizedTypeName;
 
 // Layout is <size>:<model>, where
 //   size: is an int describing the length of the model bytes
@@ -24,14 +24,8 @@ public class RegressorType
     public static final RegressorType REGRESSOR = new RegressorType();
     public static final String NAME = "Regressor";
 
-    @JsonCreator
-    public RegressorType()
+    private RegressorType()
     {
-    }
-
-    @Override
-    public String getName()
-    {
-        return NAME;
+        super(parameterizedTypeName(NAME));
     }
 }

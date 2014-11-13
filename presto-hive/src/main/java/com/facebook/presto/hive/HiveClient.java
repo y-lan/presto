@@ -40,14 +40,15 @@ import com.facebook.presto.spi.SchemaNotFoundException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SchemaTablePrefix;
 import com.facebook.presto.spi.SerializableNativeValue;
+import com.facebook.presto.spi.SortedRangeSet;
 import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.spi.ViewNotFoundException;
 import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.type.TypeSignature;
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.StandardSystemProperty;
@@ -60,7 +61,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
-import com.google.common.primitives.Primitives;
 import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
@@ -81,13 +81,13 @@ import org.apache.hadoop.hive.serde2.objectinspector.MapObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
+import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.mapred.JobConf;
 import org.joda.time.DateTimeZone;
 
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
@@ -103,6 +103,7 @@ import static com.facebook.presto.hive.HiveBucketing.getHiveBucket;
 import static com.facebook.presto.hive.HiveColumnHandle.SAMPLE_WEIGHT_COLUMN_NAME;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_PARTITION_SCHEMA_MISMATCH;
 import static com.facebook.presto.hive.HivePartition.UNPARTITIONED_ID;
+import static com.facebook.presto.hive.HiveSessionProperties.getHiveStorageFormat;
 import static com.facebook.presto.hive.HiveType.columnTypeToHiveType;
 import static com.facebook.presto.hive.HiveType.getHiveType;
 import static com.facebook.presto.hive.HiveType.getSupportedHiveType;
@@ -111,11 +112,10 @@ import static com.facebook.presto.hive.HiveUtil.PRESTO_VIEW_FLAG;
 import static com.facebook.presto.hive.HiveUtil.decodeViewData;
 import static com.facebook.presto.hive.HiveUtil.encodeViewData;
 import static com.facebook.presto.hive.HiveUtil.getTableStructFields;
-import static com.facebook.presto.hive.HiveUtil.parseHiveTimestamp;
+import static com.facebook.presto.hive.HiveUtil.parsePartitionValue;
 import static com.facebook.presto.hive.HiveUtil.partitionIdGetter;
 import static com.facebook.presto.hive.UnpartitionedPartition.UNPARTITIONED_PARTITION;
 import static com.facebook.presto.hive.util.Types.checkType;
-import static com.facebook.presto.spi.StandardErrorCode.INVALID_SESSION_PROPERTY;
 import static com.facebook.presto.spi.StandardErrorCode.PERMISSION_DENIED;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
@@ -124,6 +124,7 @@ import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -133,10 +134,6 @@ import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.Iterables.concat;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.collect.Iterables.transform;
-import static io.airlift.slice.Slices.utf8Slice;
-import static java.lang.Boolean.parseBoolean;
-import static java.lang.Double.parseDouble;
-import static java.lang.Long.parseLong;
 import static java.lang.Math.min;
 import static java.lang.String.format;
 import static java.util.UUID.randomUUID;
@@ -159,7 +156,6 @@ import static org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspe
 public class HiveClient
         implements ConnectorMetadata, ConnectorSplitManager, ConnectorRecordSinkProvider, ConnectorHandleResolver
 {
-    public static final String STORAGE_FORMAT_PROPERTY = "storage_format";
     public static final String PRESTO_OFFLINE = "presto_offline";
 
     private static final Logger log = Logger.get(HiveClient.class);
@@ -460,7 +456,7 @@ public class HiveClient
             if (hiveType != null && (includeSampleWeight || !field.getFieldName().equals(SAMPLE_WEIGHT_COLUMN_NAME))) {
                 Type type = getType(field.getFieldObjectInspector(), typeManager);
                 checkNotNull(type, "Unsupported hive type: %s", field.getFieldObjectInspector().getTypeName());
-                columns.add(new HiveColumnHandle(connectorId, field.getFieldName(), hiveColumnIndex, hiveType, type.getName(), hiveColumnIndex, false));
+                columns.add(new HiveColumnHandle(connectorId, field.getFieldName(), hiveColumnIndex, hiveType, type.getTypeSignature(), hiveColumnIndex, false));
             }
             hiveColumnIndex++;
         }
@@ -471,7 +467,7 @@ public class HiveClient
             FieldSchema field = partitionKeys.get(i);
 
             HiveType hiveType = getSupportedHiveType(field.getType());
-            columns.add(new HiveColumnHandle(connectorId, field.getName(), hiveColumnIndex + i, hiveType, getType(field.getType()).getName(), -1, true));
+            columns.add(new HiveColumnHandle(connectorId, field.getName(), hiveColumnIndex + i, hiveType, getType(field.getType()).getTypeSignature(), -1, true));
         }
 
         return columns.build();
@@ -519,16 +515,27 @@ public class HiveClient
                 if (keyType == null || valueType == null) {
                     return null;
                 }
-                return typeManager.getParameterizedType(StandardTypes.MAP, ImmutableList.of(keyType.getName(), valueType.getName()));
+                return typeManager.getParameterizedType(StandardTypes.MAP, ImmutableList.of(keyType.getTypeSignature(), valueType.getTypeSignature()), ImmutableList.of());
             case LIST:
                 ListObjectInspector listObjectInspector = checkType(fieldInspector, ListObjectInspector.class, "fieldInspector");
                 Type elementType = getType(listObjectInspector.getListElementObjectInspector(), typeManager);
                 if (elementType == null) {
                     return null;
                 }
-                return typeManager.getParameterizedType(StandardTypes.ARRAY, ImmutableList.of(elementType.getName()));
+                return typeManager.getParameterizedType(StandardTypes.ARRAY, ImmutableList.of(elementType.getTypeSignature()), ImmutableList.of());
             case STRUCT:
-                return VARCHAR;
+                StructObjectInspector structObjectInspector = checkType(fieldInspector, StructObjectInspector.class, "fieldInspector");
+                List<TypeSignature> fieldTypes = new ArrayList<>();
+                List<Object> fieldNames = new ArrayList<>();
+                for (StructField field : structObjectInspector.getAllStructFieldRefs()) {
+                    fieldNames.add(field.getFieldName());
+                    Type fieldType = getType(field.getFieldObjectInspector(), typeManager);
+                    if (fieldType == null) {
+                        return null;
+                    }
+                    fieldTypes.add(fieldType.getTypeSignature());
+                }
+                return typeManager.getParameterizedType(StandardTypes.ROW, fieldTypes, fieldNames);
             default:
                 throw new IllegalArgumentException("Unsupported hive type " + fieldInspector.getTypeName());
         }
@@ -611,7 +618,7 @@ public class HiveClient
     public void renameTable(ConnectorTableHandle tableHandle, SchemaTableName newTableName)
     {
         if (!allowRenameTable) {
-            throw new PrestoException(PERMISSION_DENIED.toErrorCode(), "Renaming tables is disabled in this Hive catalog");
+            throw new PrestoException(PERMISSION_DENIED, "Renaming tables is disabled in this Hive catalog");
         }
 
         HiveTableHandle handle = checkType(tableHandle, HiveTableHandle.class, "tableHandle");
@@ -625,13 +632,13 @@ public class HiveClient
         SchemaTableName tableName = getTableName(tableHandle);
 
         if (!allowDropTable) {
-            throw new PrestoException(PERMISSION_DENIED.toErrorCode(), "DROP TABLE is disabled in this Hive catalog");
+            throw new PrestoException(PERMISSION_DENIED, "DROP TABLE is disabled in this Hive catalog");
         }
 
         try {
             Table table = metastore.getTable(handle.getSchemaName(), handle.getTableName());
             if (!handle.getSession().getUser().equals(table.getOwner())) {
-                throw new PrestoException(PERMISSION_DENIED.toErrorCode(), format("Unable to drop table '%s': owner of the table is different from session user", table));
+                throw new PrestoException(PERMISSION_DENIED, format("Unable to drop table '%s': owner of the table is different from session user", table));
             }
             metastore.dropTable(handle.getSchemaName(), handle.getTableName());
         }
@@ -649,7 +656,7 @@ public class HiveClient
 
         checkArgument(!isNullOrEmpty(tableMetadata.getOwner()), "Table owner is null or empty");
 
-        HiveStorageFormat hiveStorageFormat = getHiveStorageFormat(session);
+        HiveStorageFormat hiveStorageFormat = getHiveStorageFormat(session, this.hiveStorageFormat);
 
         ImmutableList.Builder<String> columnNames = ImmutableList.builder();
         ImmutableList.Builder<Type> columnTypes = ImmutableList.builder();
@@ -726,21 +733,6 @@ public class HiveClient
                 temporaryPath.toString(),
                 session,
                 hiveStorageFormat);
-    }
-
-    public HiveStorageFormat getHiveStorageFormat(ConnectorSession session)
-    {
-        String storageFormatString = session.getProperties().get(STORAGE_FORMAT_PROPERTY);
-        if (storageFormatString == null) {
-            return this.hiveStorageFormat;
-        }
-
-        try {
-            return HiveStorageFormat.valueOf(storageFormatString.toUpperCase());
-        }
-        catch (IllegalArgumentException e) {
-            throw new PrestoException(INVALID_SESSION_PROPERTY.toErrorCode(), "Hive storage-format is invalid: " + storageFormatString);
-        }
     }
 
     @Override
@@ -1010,10 +1002,10 @@ public class HiveClient
     }
 
     @Override
-    public ConnectorPartitionResult getPartitions(ConnectorTableHandle tableHandle, TupleDomain<ConnectorColumnHandle> tupleDomain)
+    public ConnectorPartitionResult getPartitions(ConnectorTableHandle tableHandle, TupleDomain<ConnectorColumnHandle> effectivePredicate)
     {
         checkNotNull(tableHandle, "tableHandle is null");
-        checkNotNull(tupleDomain, "tupleDomain is null");
+        checkNotNull(effectivePredicate, "effectivePredicate is null");
         SchemaTableName tableName = getTableName(tableHandle);
 
         List<FieldSchema> partitionKeys;
@@ -1033,7 +1025,7 @@ public class HiveClient
             }
 
             partitionKeys = table.getPartitionKeys();
-            bucket = getHiveBucket(table, tupleDomain.extractFixedValues());
+            bucket = getHiveBucket(table, effectivePredicate.extractFixedValues());
         }
         catch (NoSuchObjectException e) {
             throw new TableNotFoundException(tableName);
@@ -1045,12 +1037,12 @@ public class HiveClient
             FieldSchema field = partitionKeys.get(i);
 
             HiveType hiveType = getSupportedHiveType(field.getType());
-            HiveColumnHandle columnHandle = new HiveColumnHandle(connectorId, field.getName(), i, hiveType, getType(field.getType()).getName(), -1, true);
+            HiveColumnHandle columnHandle = new HiveColumnHandle(connectorId, field.getName(), i, hiveType, getType(field.getType()).getTypeSignature(), -1, true);
             partitionKeysByNameBuilder.put(field.getName(), columnHandle);
 
             // only add to prefix if all previous keys have a value
-            if (filterPrefix.size() == i && !tupleDomain.isNone()) {
-                Domain domain = tupleDomain.getDomains().get(columnHandle);
+            if (filterPrefix.size() == i && !effectivePredicate.isNone()) {
+                Domain domain = effectivePredicate.getDomains().get(columnHandle);
                 if (domain != null && domain.isNullableSingleValue()) {
                     Comparable<?> value = domain.getNullableSingleValue();
                     if (value == null) {
@@ -1090,20 +1082,20 @@ public class HiveClient
         // do a final pass to filter based on fields that could not be used to build the prefix
         Map<String, ConnectorColumnHandle> partitionKeysByName = partitionKeysByNameBuilder.build();
         List<ConnectorPartition> partitions = FluentIterable.from(partitionNames)
-                .transform(toPartition(tableName, partitionKeysByName, bucket, timeZone, typeManager))
-                .filter(partitionMatches(tupleDomain))
+                .transform(toPartition(tableName, partitionKeysByName, bucket, timeZone, toCompactTupleDomain(effectivePredicate)))
+                .filter(partitionMatches(effectivePredicate))
                 .filter(ConnectorPartition.class)
                 .toList();
 
         // All partition key domains will be fully evaluated, so we don't need to include those
         TupleDomain<ConnectorColumnHandle> remainingTupleDomain = TupleDomain.none();
-        if (!tupleDomain.isNone()) {
-            remainingTupleDomain = TupleDomain.withColumnDomains(Maps.filterKeys(tupleDomain.getDomains(), not(in(partitionKeysByName.values()))));
+        if (!effectivePredicate.isNone()) {
+            remainingTupleDomain = TupleDomain.withColumnDomains(Maps.filterKeys(effectivePredicate.getDomains(), not(in(partitionKeysByName.values()))));
         }
 
         if (tableName.getTableName().equals("access_log") && tableName.getSchemaName().equals("default")
                 && partitions.size() > 3000) {
-            throw new PrestoException(HiveErrorCode.HIVE_UNKNOWN_ERROR.toErrorCode(), format(
+            throw new PrestoException(HiveErrorCode.HIVE_UNKNOWN_ERROR, format(
                     "Boss, querying %s partitions in %s.%s is too much for me, try to limit \"dt\" ! ｡ﾟヽ（ﾟ｀Д´ﾟ）ﾉﾟ｡ｳｧｧｧﾝ",
                     partitions.size(),
                     tableName.getSchemaName(),
@@ -1224,7 +1216,7 @@ public class HiveClient
                                 String tableType = tableColumns.get(i).getType();
                                 String partitionType = partitionColumns.get(i).getType();
                                 if (!tableType.equals(partitionType) && !isTypeChangeAcceptable(tableType, partitionType)) {
-                                    throw new PrestoException(HIVE_PARTITION_SCHEMA_MISMATCH.toErrorCode(), format(
+                                    throw new PrestoException(HIVE_PARTITION_SCHEMA_MISMATCH, format(
                                             "Table '%s' partition '%s' column '%s' type '%s' does not match table column type '%s'",
                                             tableName,
                                             partName,
@@ -1337,7 +1329,7 @@ public class HiveClient
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .add("clientId", connectorId)
                 .toString();
     }
@@ -1359,7 +1351,7 @@ public class HiveClient
             {
                 return new ColumnMetadata(
                         input.getName(),
-                        typeManager.getType(input.getTypeName()),
+                        typeManager.getType(input.getTypeSignature()),
                         input.getOrdinalPosition(),
                         input.isPartitionKey(),
                         columnComment.get(input.getName()),
@@ -1373,7 +1365,7 @@ public class HiveClient
             final Map<String, ConnectorColumnHandle> columnsByName,
             final Optional<HiveBucket> bucket,
             final DateTimeZone timeZone,
-            final TypeManager typeManager)
+            final TupleDomain<HiveColumnHandle> effectivePredicate)
     {
         return new Function<String, HivePartition>()
         {
@@ -1382,7 +1374,7 @@ public class HiveClient
             {
                 try {
                     if (partitionId.equals(UNPARTITIONED_ID)) {
-                        return new HivePartition(tableName);
+                        return new HivePartition(tableName, effectivePredicate);
                     }
 
                     ImmutableMap.Builder<ConnectorColumnHandle, SerializableNativeValue> builder = ImmutableMap.builder();
@@ -1391,46 +1383,9 @@ public class HiveClient
                         checkArgument(handle != null, "Invalid partition key %s in partition %s", entry.getKey(), partitionId);
                         HiveColumnHandle columnHandle = checkType(handle, HiveColumnHandle.class, "handle");
 
-                        String value = entry.getValue();
-                        Type type = typeManager.getType(columnHandle.getTypeName());
-                        if (HiveUtil.isHiveNull(value.getBytes(StandardCharsets.UTF_8))) {
-                            builder.put(columnHandle, new SerializableNativeValue(Primitives.wrap(type.getJavaType()), null));
-                        }
-                        else if (BOOLEAN.equals(type)) {
-                            if (value.isEmpty()) {
-                                builder.put(columnHandle, new SerializableNativeValue(Boolean.class, false));
-                            }
-                            else {
-                                builder.put(columnHandle, new SerializableNativeValue(Boolean.class, parseBoolean(value)));
-                            }
-                        }
-                        else if (BIGINT.equals(type)) {
-                            if (value.isEmpty()) {
-                                builder.put(columnHandle, new SerializableNativeValue(Long.class, 0L));
-                            }
-                            else if (columnHandle.getHiveType().equals(HiveType.HIVE_TIMESTAMP)) {
-                                builder.put(columnHandle, new SerializableNativeValue(Long.class, parseHiveTimestamp(value, timeZone)));
-                            }
-                            else {
-                                builder.put(columnHandle, new SerializableNativeValue(Long.class, parseLong(value)));
-                            }
-                        }
-                        else if (DOUBLE.equals(type)) {
-                            if (value.isEmpty()) {
-                                builder.put(columnHandle, new SerializableNativeValue(Double.class, 0.0));
-                            }
-                            else {
-                                builder.put(columnHandle, new SerializableNativeValue(Double.class, parseDouble(value)));
-                            }
-                        }
-                        else if (VARCHAR.equals(type)) {
-                            builder.put(columnHandle, new SerializableNativeValue(Slice.class, utf8Slice(value)));
-                        }
-                        else {
-                            throw new IllegalArgumentException(format("Unsupported partition type [%s] for partition: %s", type, partitionId));
-                        }
+                        builder.put(columnHandle, parsePartitionValue(partitionId, entry.getValue(), columnHandle.getHiveType(), timeZone));
                     }
-                    return new HivePartition(tableName, partitionId, builder.build(), bucket);
+                    return new HivePartition(tableName, effectivePredicate, partitionId, builder.build(), bucket);
                 }
                 catch (MetaException e) {
                     // invalid partition id
@@ -1506,5 +1461,22 @@ public class HiveClient
             return tableType.substring(0, commonLength).equals(partitionType.substring(0, commonLength));
         }
         return false;
+    }
+
+    public static TupleDomain<HiveColumnHandle> toCompactTupleDomain(TupleDomain<ConnectorColumnHandle> effectivePredicate)
+    {
+        ImmutableMap.Builder<HiveColumnHandle, Domain> builder = ImmutableMap.builder();
+        for (Entry<ConnectorColumnHandle, Domain> entry : effectivePredicate.getDomains().entrySet()) {
+            HiveColumnHandle hiveColumnHandle = checkType(entry.getKey(), HiveColumnHandle.class, "ColumnHandle");
+
+            SortedRangeSet ranges = entry.getValue().getRanges();
+            if (!ranges.isNone()) {
+                // compact the range to a single span
+                ranges = SortedRangeSet.of(entry.getValue().getRanges().getSpan());
+            }
+
+            builder.put(hiveColumnHandle, new Domain(ranges, entry.getValue().isNullAllowed()));
+        }
+        return TupleDomain.withColumnDomains(builder.build());
     }
 }

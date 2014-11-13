@@ -70,6 +70,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.hadoop.HadoopFileStatus.isFile;
 import static com.facebook.presto.hive.HiveBucketing.HiveBucket;
+import static com.facebook.presto.hive.HiveErrorCode.HIVE_FILE_NOT_FOUND;
+import static com.facebook.presto.hive.HiveErrorCode.HIVE_UNKNOWN_ERROR;
 import static com.facebook.presto.hive.HiveType.getSupportedHiveType;
 import static com.facebook.presto.hive.HiveUtil.getInputFormat;
 import static com.facebook.presto.hive.HiveUtil.isSplittable;
@@ -194,7 +196,7 @@ class HiveSplitSourceProvider
                 final String partitionName = partition.getHivePartition().getPartitionId();
                 final Properties schema = getPartitionSchema(table, partition.getPartition());
                 final List<HivePartitionKey> partitionKeys = getPartitionKeys(table, partition.getPartition());
-                final TupleDomain<HiveColumnHandle> tupleDomain = (TupleDomain<HiveColumnHandle>) (Object) partition.getHivePartition().getTupleDomain();
+                final TupleDomain<HiveColumnHandle> effectivePredicate = partition.getHivePartition().getEffectivePredicate();
 
                 Path path = new Path(getPartitionLocation(table, partition.getPartition()));
                 Configuration configuration = hdfsEnvironment.getConfiguration(path);
@@ -220,7 +222,7 @@ class HiveSplitSourceProvider
                                 partitionKeys,
                                 false,
                                 session,
-                                tupleDomain));
+                                effectivePredicate));
                     }
                     continue;
                 }
@@ -234,7 +236,18 @@ class HiveSplitSourceProvider
                         BlockLocation[] blockLocations = fs.getFileBlockLocations(file, 0, file.getLen());
                         boolean splittable = isSplittable(inputFormat, fs, file.getPath());
 
-                        hiveSplitSource.addToQueue(createHiveSplits(partitionName, file, blockLocations, 0, file.getLen(), schema, partitionKeys, splittable, session, tupleDomain));
+                        hiveSplitSource.addToQueue(createHiveSplits(
+                                partitionName,
+                                file,
+                                blockLocations,
+                                0,
+                                file.getLen(),
+                                schema,
+                                partitionKeys,
+                                splittable,
+                                session,
+                                effectivePredicate));
+
                         continue;
                     }
                 }
@@ -268,7 +281,7 @@ class HiveSplitSourceProvider
                                     partitionKeys,
                                     splittable,
                                     session,
-                                    tupleDomain));
+                                    effectivePredicate));
                         }
                         catch (IOException e) {
                             hiveSplitSource.fail(e);
@@ -368,7 +381,7 @@ class HiveSplitSourceProvider
             List<HivePartitionKey> partitionKeys,
             boolean splittable,
             ConnectorSession session,
-            TupleDomain<HiveColumnHandle> tupleDomain)
+            TupleDomain<HiveColumnHandle> effectivePredicate)
             throws IOException
     {
         ImmutableList.Builder<HiveSplit> builder = ImmutableList.builder();
@@ -408,7 +421,7 @@ class HiveSplitSourceProvider
                             addresses,
                             forceLocalScheduling,
                             session,
-                            tupleDomain));
+                            effectivePredicate));
 
                     chunkOffset += chunkLength;
                     remainingInitialSplits--;
@@ -435,7 +448,7 @@ class HiveSplitSourceProvider
                     addresses,
                     forceLocalScheduling,
                     session,
-                    tupleDomain));
+                    effectivePredicate));
         }
         return builder.build();
     }
@@ -451,7 +464,7 @@ class HiveSplitSourceProvider
             return Boolean.valueOf(forceLocalScheduling);
         }
         catch (IllegalArgumentException e) {
-            throw new PrestoException(NOT_SUPPORTED.toErrorCode(), "Invalid Hive session property '" + FORCE_LOCAL_SCHEDULING + "=" + forceLocalScheduling + "'");
+            throw new PrestoException(NOT_SUPPORTED, "Invalid Hive session property '" + FORCE_LOCAL_SCHEDULING + "=" + forceLocalScheduling + "'");
         }
     }
 
@@ -620,9 +633,9 @@ class HiveSplitSourceProvider
                 throw (PrestoException) throwable;
             }
             if (throwable instanceof FileNotFoundException) {
-                throw new PrestoException(HiveErrorCode.HIVE_FILE_NOT_FOUND.toErrorCode(), throwable);
+                throw new PrestoException(HIVE_FILE_NOT_FOUND, throwable);
             }
-            throw new PrestoException(HiveErrorCode.HIVE_UNKNOWN_ERROR.toErrorCode(), throwable);
+            throw new PrestoException(HIVE_UNKNOWN_ERROR, throwable);
         }
     }
 

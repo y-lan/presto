@@ -14,6 +14,10 @@
 package com.facebook.presto.hive;
 
 import com.facebook.presto.hadoop.HadoopNative;
+import com.facebook.presto.hive.orc.DwrfPageSourceFactory;
+import com.facebook.presto.hive.orc.DwrfRecordCursorProvider;
+import com.facebook.presto.hive.orc.OrcPageSourceFactory;
+import com.facebook.presto.hive.orc.OrcRecordCursorProvider;
 import com.facebook.presto.hive.rcfile.RcFilePageSourceFactory;
 import com.facebook.presto.spi.ConnectorPageSource;
 import com.facebook.presto.spi.ConnectorSession;
@@ -37,7 +41,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
-import org.apache.hadoop.hive.ql.io.IOConstants;
 import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat;
@@ -169,7 +172,6 @@ public final class BenchmarkHiveFileFormats
     {
         HadoopNative.requireHadoopNative();
         ReaderWriterProfiler.setProfilerOptions(JOB_CONF);
-        JOB_CONF.set(IOConstants.COLUMNS, Joiner.on(',').join(transform(COLUMNS, columnNameGetter())));
         DATA_DIR.mkdirs();
 
         List<BenchmarkFile> benchmarkFiles = ImmutableList.<BenchmarkFile>builder()
@@ -217,6 +219,7 @@ public final class BenchmarkHiveFileFormats
                                 .add(new DwrfRecordCursorProvider())
                                 .build(),
                         ImmutableList.<HivePageSourceFactory>builder()
+                                .add(new DwrfPageSourceFactory(TYPE_MANAGER))
                                 .build()))
 
                 .add(new BenchmarkFile(
@@ -228,6 +231,7 @@ public final class BenchmarkHiveFileFormats
                                 .add(new OrcRecordCursorProvider())
                                 .build(),
                         ImmutableList.<HivePageSourceFactory>builder()
+                                .add(new OrcPageSourceFactory(TYPE_MANAGER))
                                 .build()))
                 .build();
 
@@ -288,7 +292,7 @@ public final class BenchmarkHiveFileFormats
                     long result = 0;
                     start = System.nanoTime();
                     for (int loop = 0; loop < loopCount; loop++) {
-                        result = benchmarkReadBigint(
+                        result = benchmarkReadNone(
                                 createFileSplit(benchmarkFile.getFile(compressionType)),
                                 createPartitionProperties(benchmarkFile),
                                 recordCursorProvider
@@ -303,7 +307,7 @@ public final class BenchmarkHiveFileFormats
                     long result = 0;
                     start = System.nanoTime();
                     for (int loop = 0; loop < loopCount; loop++) {
-                        result = benchmarkReadBigint(
+                        result = benchmarkReadNone(
                                 createFileSplit(benchmarkFile.getFile(compressionType)),
                                 createPartitionProperties(benchmarkFile),
                                 pageSourceFactory
@@ -1484,7 +1488,7 @@ public final class BenchmarkHiveFileFormats
                     column.getColumnName(),
                     ordinal,
                     HiveType.getHiveType(inspector),
-                    getType(inspector, TYPE_MANAGER).getName(),
+                    getType(inspector, TYPE_MANAGER).getTypeSignature(),
                     ordinal,
                     false));
         }
@@ -1577,7 +1581,7 @@ public final class BenchmarkHiveFileFormats
         if (recordCursorProvider instanceof GenericHiveRecordCursorProvider) {
             return "generic";
         }
-        return "custom";
+        return "cursor";
     }
 
     private static FileSplit createFileSplit(File file)

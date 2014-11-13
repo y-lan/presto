@@ -19,10 +19,10 @@ import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.ml.type.ClassifierType;
 import com.facebook.presto.ml.type.ModelType;
 import com.facebook.presto.ml.type.RegressorType;
+import com.facebook.presto.operator.aggregation.InternalAggregationFunction;
 import com.facebook.presto.spi.Page;
 import com.facebook.presto.operator.RowPageBuilder;
 import com.facebook.presto.operator.aggregation.Accumulator;
-import com.facebook.presto.operator.aggregation.InternalAggregationFunction;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.type.TypeRegistry;
@@ -47,9 +47,9 @@ public class TestEvaluateClassifierPredictions
             throws Exception
     {
         TypeRegistry typeRegistry = new TypeRegistry();
-        typeRegistry.addType(new ClassifierType());
-        typeRegistry.addType(new RegressorType());
-        typeRegistry.addType(new ModelType());
+        typeRegistry.addType(ClassifierType.CLASSIFIER);
+        typeRegistry.addType(RegressorType.REGRESSOR);
+        typeRegistry.addType(ModelType.MODEL);
         metadata.addFunctions(new MLFunctionFactory(typeRegistry).listFunctions());
         InternalAggregationFunction aggregation = metadata.getExactFunction(new Signature("evaluate_classifier_predictions", StandardTypes.VARCHAR, StandardTypes.BIGINT, StandardTypes.BIGINT)).getAggregationFunction();
         Accumulator accumulator = aggregation.bind(ImmutableList.of(0, 1), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0).createAccumulator();

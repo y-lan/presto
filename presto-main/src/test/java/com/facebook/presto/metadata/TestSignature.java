@@ -28,9 +28,11 @@ import org.testng.annotations.Test;
 
 import static com.facebook.presto.metadata.Signature.comparableTypeParameter;
 import static com.facebook.presto.metadata.Signature.typeParameter;
+import static com.facebook.presto.metadata.Signature.withVariadicBound;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.HyperLogLogType.HYPER_LOG_LOG;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
@@ -64,7 +66,7 @@ public class TestSignature
         assertNotNull(signature.bindTypeParameters(ImmutableList.<Type>of(BIGINT), true, typeManager));
         assertNotNull(signature.bindTypeParameters(ImmutableList.of(VARCHAR), true, typeManager));
         assertNull(signature.bindTypeParameters(ImmutableList.of(VARCHAR, BIGINT), true, typeManager));
-        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>")), true, typeManager));
+        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>"))), true, typeManager));
     }
 
     @Test
@@ -76,7 +78,7 @@ public class TestSignature
         assertNotNull(signature.bindTypeParameters(ImmutableList.of(BIGINT), true, typeManager));
         assertNull(signature.bindTypeParameters(ImmutableList.of(VARCHAR), true, typeManager));
         assertNull(signature.bindTypeParameters(ImmutableList.of(VARCHAR, BIGINT), true, typeManager));
-        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>")), true, typeManager));
+        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>"))), true, typeManager));
     }
 
     @Test
@@ -85,17 +87,17 @@ public class TestSignature
     {
         TypeManager typeManager = new TypeRegistry();
         Signature signature = new Signature("get", ImmutableList.of(typeParameter("T")), "T", ImmutableList.of("array<T>"), false, true);
-        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>")), true, typeManager));
+        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>"))), true, typeManager));
         assertNull(signature.bindTypeParameters(ImmutableList.of(BIGINT), true, typeManager));
 
         signature = new Signature("contains", ImmutableList.of(comparableTypeParameter("T")), "T", ImmutableList.of("array<T>", "T"), false, true);
-        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>"), BIGINT), true, typeManager));
-        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>"), VARCHAR), true, typeManager));
-        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<HyperLogLog>"), HYPER_LOG_LOG), true, typeManager));
+        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>")), BIGINT), true, typeManager));
+        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>")), VARCHAR), true, typeManager));
+        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<HyperLogLog>")), HYPER_LOG_LOG), true, typeManager));
 
         signature = new Signature("foo", ImmutableList.of(typeParameter("T")), "T", ImmutableList.of("array<T>", "array<T>"), false, true);
-        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>"), typeManager.getType("array<bigint>")), true, typeManager));
-        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("array<bigint>"), typeManager.getType("array<varchar>")), true, typeManager));
+        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>")), typeManager.getType(parseTypeSignature("array<bigint>"))), true, typeManager));
+        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("array<bigint>")), typeManager.getType(parseTypeSignature("array<varchar>"))), true, typeManager));
     }
 
     @Test
@@ -104,8 +106,20 @@ public class TestSignature
     {
         TypeManager typeManager = new TypeRegistry();
         Signature signature = new Signature("get", ImmutableList.of(typeParameter("K"), typeParameter("V")), "V", ImmutableList.of("map<K,V>", "K"), false, true);
-        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("map<bigint,varchar>"), BIGINT), true, typeManager));
-        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType("map<bigint,varchar>"), VARCHAR), true, typeManager));
+        assertNotNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("map<bigint,varchar>")), BIGINT), true, typeManager));
+        assertNull(signature.bindTypeParameters(ImmutableList.of(typeManager.getType(parseTypeSignature("map<bigint,varchar>")), VARCHAR), true, typeManager));
+    }
+
+    @Test
+    public void testVariadic()
+            throws Exception
+    {
+        TypeManager typeManager = new TypeRegistry();
+        Type mapType = typeManager.getType(parseTypeSignature("map<bigint,bigint>"));
+        Type arrayType = typeManager.getType(parseTypeSignature("array<bigint>"));
+        Signature signature = new Signature("foo", ImmutableList.of(withVariadicBound("T", "map")), "bigint", ImmutableList.of("T"), true, true);
+        assertNotNull(signature.bindTypeParameters(ImmutableList.of(mapType), true, typeManager));
+        assertNull(signature.bindTypeParameters(ImmutableList.of(arrayType), true, typeManager));
     }
 
     @Test

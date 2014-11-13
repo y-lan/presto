@@ -29,7 +29,12 @@ public interface Type
      * The name of a user defined type must be a legal identifier in Presto.
      */
     @JsonValue
-    String getName();
+    TypeSignature getTypeSignature();
+
+    /**
+     * Returns the name of this type that should be displayed to end-users.
+     */
+    String getDisplayName();
 
     /**
      * True if the type supports equalTo and hash.

@@ -18,12 +18,12 @@ import com.datastax.driver.core.Row;
 import com.datastax.driver.core.utils.Bytes;
 import com.facebook.presto.cassandra.util.CassandraCqlUtils;
 import com.facebook.presto.spi.PrestoException;
-import com.facebook.presto.spi.StandardErrorCode;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.BooleanType;
 import com.facebook.presto.spi.type.DoubleType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.VarcharType;
+import com.facebook.presto.spi.type.TimestampType;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.net.InetAddresses;
 import io.airlift.slice.Slice;
@@ -38,6 +38,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
+import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.net.InetAddresses.toAddrString;
@@ -57,7 +58,7 @@ public enum CassandraType
     INET(VarcharType.VARCHAR, InetAddress.class),
     INT(BigintType.BIGINT, Integer.class),
     TEXT(VarcharType.VARCHAR, String.class),
-    TIMESTAMP(BigintType.BIGINT, Date.class),
+    TIMESTAMP(TimestampType.TIMESTAMP, Date.class),
     UUID(VarcharType.VARCHAR, java.util.UUID.class),
     TIMEUUID(VarcharType.VARCHAR, java.util.UUID.class),
     VARCHAR(VarcharType.VARCHAR, String.class),
@@ -451,7 +452,7 @@ public enum CassandraType
             case MAP:
             default:
                 // todo should we just skip partition pruning instead of throwing an exception?
-                throw new PrestoException(StandardErrorCode.NOT_SUPPORTED.toErrorCode(), "Unsupport partition key type: " + this);
+                throw new PrestoException(NOT_SUPPORTED, "Unsupport partition key type: " + this);
         }
     }
 

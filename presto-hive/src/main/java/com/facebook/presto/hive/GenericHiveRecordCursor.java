@@ -45,7 +45,6 @@ import static com.facebook.presto.hive.HiveBooleanParser.isTrue;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CURSOR_ERROR;
 import static com.facebook.presto.hive.HiveUtil.getDeserializer;
 import static com.facebook.presto.hive.HiveUtil.getTableObjectInspector;
-import static com.facebook.presto.hive.HiveUtil.isArrayOrMap;
 import static com.facebook.presto.hive.HiveUtil.isStructuralType;
 import static com.facebook.presto.hive.HiveUtil.parseHiveTimestamp;
 import static com.facebook.presto.hive.NumberParser.parseDouble;
@@ -149,7 +148,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
             HiveColumnHandle column = columns.get(i);
 
             names[i] = column.getName();
-            types[i] = typeManager.getType(column.getTypeName());
+            types[i] = typeManager.getType(column.getTypeSignature());
             hiveTypes[i] = column.getHiveType();
 
             if (!column.isPartitionKey()) {
@@ -266,7 +265,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
         }
         catch (IOException | SerDeException | RuntimeException e) {
             closeWithSuppression(e);
-            throw new PrestoException(HIVE_CURSOR_ERROR.toErrorCode(), e);
+            throw new PrestoException(HIVE_CURSOR_ERROR, e);
         }
     }
 
@@ -462,7 +461,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
         else if (DOUBLE.equals(type)) {
             parseDoubleColumn(column);
         }
-        else if (VARCHAR.equals(type) || VARBINARY.equals(type) || isArrayOrMap(hiveTypes[column])) {
+        else if (VARCHAR.equals(type) || VARBINARY.equals(type) || isStructuralType(hiveTypes[column])) {
             parseStringColumn(column);
         }
         else if (DATE.equals(type)) {

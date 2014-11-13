@@ -53,12 +53,14 @@ import static com.facebook.presto.operator.aggregation.VarBinaryMaxAggregation.V
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.testing.MaterializedResult.resultBuilder;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 import static io.airlift.testing.Assertions.assertEqualsIgnoreOrder;
+import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
@@ -90,8 +92,8 @@ public class TestHashAggregationOperator
             throws Exception
     {
         MetadataManager metadata = new MetadataManager();
-        InternalAggregationFunction countVarcharColumn = metadata.resolveFunction(QualifiedName.of("count"), ImmutableList.of(StandardTypes.VARCHAR), false).getAggregationFunction();
-        InternalAggregationFunction countBooleanColumn = metadata.resolveFunction(QualifiedName.of("count"), ImmutableList.of(StandardTypes.BOOLEAN), false).getAggregationFunction();
+        InternalAggregationFunction countVarcharColumn = metadata.resolveFunction(QualifiedName.of("count"), ImmutableList.of(parseTypeSignature(StandardTypes.VARCHAR)), false).getAggregationFunction();
+        InternalAggregationFunction countBooleanColumn = metadata.resolveFunction(QualifiedName.of("count"), ImmutableList.of(parseTypeSignature(StandardTypes.BOOLEAN)), false).getAggregationFunction();
         List<Page> input = rowPagesBuilder(VARCHAR, VARCHAR, VARCHAR, BIGINT, BOOLEAN)
                 .addSequencePage(10, 100, 0, 100, 0, 500)
                 .addSequencePage(10, 100, 0, 200, 0, 500)
@@ -109,7 +111,8 @@ public class TestHashAggregationOperator
                         VAR_BINARY_MAX.bind(ImmutableList.of(2), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0),
                         countVarcharColumn.bind(ImmutableList.of(0), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0),
                         countBooleanColumn.bind(ImmutableList.of(4), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0)),
-                100_000);
+                100_000,
+                new DataSize(16, MEGABYTE));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 
@@ -151,7 +154,8 @@ public class TestHashAggregationOperator
                         LONG_SUM.bind(ImmutableList.of(3), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0),
                         LONG_AVERAGE.bind(ImmutableList.of(3), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0),
                         VAR_BINARY_MAX.bind(ImmutableList.of(2), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0)),
-                100_000);
+                100_000,
+                new DataSize(16, MEGABYTE));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 
@@ -171,7 +175,7 @@ public class TestHashAggregationOperator
                 .addSequencePage(10, 100)
                 .build();
 
-        DriverContext driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, TEST_SESSION, new DataSize(10, Unit.MEGABYTE))
+        DriverContext driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, TEST_SESSION, new DataSize(10, MEGABYTE))
                 .addPipelineContext(true, true)
                 .addDriverContext();
 
@@ -181,7 +185,8 @@ public class TestHashAggregationOperator
                 Ints.asList(0),
                 Step.SINGLE,
                 ImmutableList.of(COUNT.bind(ImmutableList.of(0), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0)),
-                100_000);
+                100_000,
+                new DataSize(16, MEGABYTE));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 
@@ -201,7 +206,7 @@ public class TestHashAggregationOperator
                 .addSequencePage(10, 100)
                 .build();
 
-        DriverContext driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, TEST_SESSION, new DataSize(3, Unit.MEGABYTE))
+        DriverContext driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, TEST_SESSION, new DataSize(3, MEGABYTE))
                 .addPipelineContext(true, true)
                 .addDriverContext();
 
@@ -211,7 +216,8 @@ public class TestHashAggregationOperator
                 Ints.asList(0),
                 Step.SINGLE,
                 ImmutableList.of(COUNT.bind(ImmutableList.of(0), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0)),
-                100_000);
+                100_000,
+                new DataSize(16, MEGABYTE));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 
@@ -237,7 +243,8 @@ public class TestHashAggregationOperator
                 Step.SINGLE,
                 ImmutableList.of(COUNT.bind(ImmutableList.of(0), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0),
                         LONG_AVERAGE.bind(ImmutableList.of(1), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0)),
-                100_000);
+                100_000,
+                new DataSize(16, MEGABYTE));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 
@@ -261,7 +268,8 @@ public class TestHashAggregationOperator
                 Ints.asList(0),
                 Step.PARTIAL,
                 ImmutableList.of(LONG_SUM.bind(ImmutableList.of(0), Optional.<Integer>absent(), Optional.<Integer>absent(), 1.0)),
-                100_000);
+                100_000,
+                new DataSize(16, MEGABYTE));
 
         DriverContext driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, TEST_SESSION, new DataSize(1, Unit.KILOBYTE))
                 .addPipelineContext(true, true)

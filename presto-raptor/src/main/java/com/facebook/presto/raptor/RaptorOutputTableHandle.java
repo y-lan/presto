@@ -23,8 +23,8 @@ import javax.annotation.Nullable;
 
 import java.util.List;
 
-import static com.facebook.presto.metadata.MetadataUtil.checkSchemaName;
-import static com.facebook.presto.metadata.MetadataUtil.checkTableName;
+import static com.facebook.presto.raptor.util.MetadataUtil.checkSchemaName;
+import static com.facebook.presto.raptor.util.MetadataUtil.checkTableName;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public class RaptorOutputTableHandle
@@ -43,7 +43,7 @@ public class RaptorOutputTableHandle
             @JsonProperty("tableName") String tableName,
             @JsonProperty("columnHandles") List<RaptorColumnHandle> columnHandles,
             @JsonProperty("columnTypes") List<Type> columnTypes,
-            @JsonProperty("sampleWeightColumnHandle") RaptorColumnHandle sampleWeightColumnHandle)
+            @JsonProperty("sampleWeightColumnHandle") @Nullable RaptorColumnHandle sampleWeightColumnHandle)
     {
         this.schemaName = checkSchemaName(schemaName);
         this.tableName = checkTableName(tableName);
@@ -76,6 +76,7 @@ public class RaptorOutputTableHandle
         return columnTypes;
     }
 
+    @Nullable
     @JsonProperty
     public RaptorColumnHandle getSampleWeightColumnHandle()
     {

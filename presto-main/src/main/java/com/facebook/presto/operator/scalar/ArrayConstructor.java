@@ -24,10 +24,12 @@ import com.facebook.presto.metadata.ParametricScalar;
 import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.type.TypeSignature;
 import com.facebook.presto.sql.gen.ByteCodeUtils;
 import com.facebook.presto.sql.gen.CompilerUtils;
 import com.facebook.presto.type.ArrayType;
 import com.facebook.presto.type.MapType;
+import com.facebook.presto.type.RowType;
 import com.facebook.presto.type.UnknownType;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
@@ -52,9 +54,11 @@ import static com.facebook.presto.byteCode.Access.a;
 import static com.facebook.presto.byteCode.NamedParameterDefinition.arg;
 import static com.facebook.presto.byteCode.ParameterizedType.type;
 import static com.facebook.presto.metadata.Signature.typeParameter;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static com.facebook.presto.sql.gen.CompilerUtils.defineClass;
 import static com.facebook.presto.sql.relational.Signatures.arrayConstructorSignature;
 import static com.facebook.presto.type.TypeUtils.parameterizedTypeName;
+import static com.facebook.presto.util.Reflection.methodHandle;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.lang.invoke.MethodHandles.lookup;
 
@@ -63,18 +67,7 @@ public final class ArrayConstructor
 {
     public static final ArrayConstructor ARRAY_CONSTRUCTOR = new ArrayConstructor();
     private static final Signature SIGNATURE = new Signature("array_constructor", ImmutableList.of(typeParameter("E")), "array<E>", ImmutableList.of("E"), true, true);
-    private static final MethodHandle EMPTY_ARRAY_CONSTRUCTOR;
-
-    static {
-        MethodHandle methodHandle;
-        try {
-            methodHandle = lookup().unreflect(ArrayConstructor.class.getMethod("emptyArrayConstructor"));
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        EMPTY_ARRAY_CONSTRUCTOR = methodHandle;
-    }
+    private static final MethodHandle EMPTY_ARRAY_CONSTRUCTOR = methodHandle(ArrayConstructor.class, "emptyArrayConstructor");
 
     @Override
     public Signature getSignature()
@@ -106,7 +99,7 @@ public final class ArrayConstructor
     {
         // Check to see if we're creating an empty, un-specialized array
         if (types.isEmpty()) {
-            return new FunctionInfo(arrayConstructorSignature(parameterizedTypeName("array", UnknownType.NAME), ImmutableList.<String>of()), "", true, EMPTY_ARRAY_CONSTRUCTOR, true, false, ImmutableList.<Boolean>of());
+            return new FunctionInfo(arrayConstructorSignature(parameterizedTypeName("array", parseTypeSignature(UnknownType.NAME)), ImmutableList.<TypeSignature>of()), "", true, EMPTY_ARRAY_CONSTRUCTOR, true, false, ImmutableList.<Boolean>of());
         }
 
         checkArgument(types.size() == 1, "Can only construct arrays from exactly matching types");
@@ -131,7 +124,7 @@ public final class ArrayConstructor
             throw Throwables.propagate(e);
         }
         List<Boolean> nullableParameters = ImmutableList.copyOf(Collections.nCopies(stackTypes.size(), true));
-        return new FunctionInfo(arrayConstructorSignature(parameterizedTypeName("array", type.getName()), Collections.nCopies(arity, type.getName())), "Constructs an array of the given elements", true, methodHandle, true, false, nullableParameters);
+        return new FunctionInfo(arrayConstructorSignature(parameterizedTypeName("array", type.getTypeSignature()), Collections.nCopies(arity, type.getTypeSignature())), "Constructs an array of the given elements", true, methodHandle, true, false, nullableParameters);
     }
 
     public static Slice emptyArrayConstructor()
@@ -186,7 +179,7 @@ public final class ArrayConstructor
             body.invokeInterface(List.class, "add", boolean.class, Object.class);
         }
 
-        if (elementType instanceof ArrayType || elementType instanceof MapType) {
+        if (elementType instanceof ArrayType || elementType instanceof MapType || elementType instanceof RowType) {
             body.comment("return rawSlicesToStackRepresentation(values);")
                     .getVariable(valuesVariable)
                     .invokeStatic(ArrayType.class, "rawSlicesToStackRepresentation", Slice.class, List.class)
