@@ -586,8 +586,17 @@ public class ExpressionAnalyzer
             }
 
             ImmutableList.Builder<TypeSignature> argumentTypes = ImmutableList.builder();
+            ImmutableList.Builder<String> literalValues = ImmutableList.builder();
             for (Expression expression : node.getArguments()) {
-                argumentTypes.add(process(expression, context).getTypeSignature());
+                TypeSignature typeSignature = process(expression, context).getTypeSignature();
+                if (expression instanceof StringLiteral) {
+                    StringLiteral stringLiteral = (StringLiteral) expression;
+                    typeSignature = new TypeSignature(typeSignature.getBase(),
+                        typeSignature.getParameters(),
+                        ImmutableList.<Object>of(stringLiteral.getValue())
+                        );
+                }
+                argumentTypes.add(typeSignature);
             }
 
             FunctionInfo function = metadata.resolveFunction(node.getName(), argumentTypes.build(), context.isApproximate());

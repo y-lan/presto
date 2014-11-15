@@ -45,6 +45,7 @@ import com.facebook.presto.operator.scalar.HyperLogLogFunctions;
 import com.facebook.presto.operator.scalar.JsonFunctions;
 import com.facebook.presto.operator.scalar.MathFunctions;
 import com.facebook.presto.operator.scalar.RegexpFunctions;
+import com.facebook.presto.operator.scalar.RowJsonGet;
 import com.facebook.presto.operator.scalar.StringFunctions;
 import com.facebook.presto.operator.scalar.UrlFunctions;
 import com.facebook.presto.operator.scalar.VarbinaryFunctions;
@@ -281,7 +282,8 @@ public class FunctionRegistry
                 .function(MAP_TO_JSON)
                 .function(MAP_KEYS)
                 .function(MAP_VALUES)
-                .function(ROW_TO_JSON);
+                .function(ROW_TO_JSON)
+                .function(RowJsonGet.ROW_JSON_GET);
 
         if (experimentalSyntaxEnabled) {
             builder.aggregate(ApproximateAverageAggregations.class)
@@ -331,6 +333,28 @@ public class FunctionRegistry
         for (ParametricFunction function : candidates) {
             Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, false, typeManager);
             if (boundTypeParameters != null) {
+                if (boundTypeParameters.size() > 0 && function.getSignature().getName().equals("json_get")) {
+                    if (parameterTypes.size() == 2) {
+                        TypeSignature row = parameterTypes.get(0);
+                        TypeSignature key = parameterTypes.get(1);
+                        if (row.getBase().equals(StandardTypes.ROW) && key.getBase().equals(StandardTypes.VARCHAR) && key.getLiteralParameters() != null) {
+                            RowType rowType = (RowType) (resolvedTypes.get(0));
+                            final String field = (String) (key.getLiteralParameters().get(0));
+                            RowType.RowField retField = Iterables.find(rowType.getFields(), new Predicate<RowType.RowField>()
+                            {
+                                @Override
+                                public boolean apply(RowType.RowField input)
+                                {
+                                    return input.getName().equals(field);
+                                }
+                            }, null);
+                            if (retField != null) {
+                                boundTypeParameters.put("E", retField.getType());
+                            }
+                        }
+                    }
+                }
+
                 checkArgument(match == null, "Ambiguous call to %s with parameters %s", name, parameterTypes);
                 match = function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager);
             }

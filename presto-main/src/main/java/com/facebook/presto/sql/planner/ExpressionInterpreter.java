@@ -23,6 +23,7 @@ import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeSignature;
 import com.facebook.presto.sql.tree.ArithmeticExpression;
 import com.facebook.presto.sql.tree.ArrayConstructor;
 import com.facebook.presto.sql.tree.AstVisitor;
@@ -60,7 +61,6 @@ import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
 import io.airlift.slice.Slice;
 import org.joni.Regex;
 
@@ -618,14 +618,27 @@ public class ExpressionInterpreter
         protected Object visitFunctionCall(FunctionCall node, Object context)
         {
             List<Type> argumentTypes = new ArrayList<>();
+            List<TypeSignature> argumentSignature = new ArrayList<>();
             List<Object> argumentValues = new ArrayList<>();
             for (Expression expression : node.getArguments()) {
                 Object value = process(expression, context);
                 Type type = expressionTypes.get(expression);
+                TypeSignature signature = typeSignatureGetter().apply(type);
+                if (expression instanceof StringLiteral) {
+                    StringLiteral stringLiteral = (StringLiteral) expression;
+                    argumentSignature.add(new TypeSignature(
+                            signature.getBase(),
+                            signature.getParameters(),
+                            ImmutableList.<Object>of(stringLiteral.getValue())
+                    ));
+                }
+                else {
+                    argumentSignature.add(signature);
+                }
                 argumentValues.add(value);
                 argumentTypes.add(type);
             }
-            FunctionInfo function = metadata.resolveFunction(node.getName(), Lists.transform(argumentTypes, typeSignatureGetter()), false);
+            FunctionInfo function = metadata.resolveFunction(node.getName(), argumentSignature, false);
             for (int i = 0; i < argumentValues.size(); i++) {
                 Object value = argumentValues.get(i);
                 if (value == null && !function.getNullableArguments().get(i)) {
