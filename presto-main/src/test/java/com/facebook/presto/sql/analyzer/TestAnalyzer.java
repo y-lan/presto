@@ -97,6 +97,27 @@ public class TestAnalyzer
     }
 
     @Test
+    public void testNonComparableWindowPartition()
+            throws Exception
+    {
+        assertFails(TYPE_MISMATCH, "SELECT row_number() OVER (PARTITION BY t.x) FROM (VALUES(null)) AS t(x)");
+    }
+
+    @Test
+    public void testNonComparableWindowOrder()
+            throws Exception
+    {
+        assertFails(TYPE_MISMATCH, "SELECT row_number() OVER (ORDER BY t.x) FROM (VALUES(null)) AS t(x)");
+    }
+
+    @Test
+    public void testNonComparableDistinct()
+            throws Exception
+    {
+        assertFails(TYPE_MISMATCH, "SELECT count(DISTINCT x) FROM (SELECT approx_set(1) x)");
+    }
+
+    @Test
     public void testScalarSubQueryException()
             throws Exception
     {

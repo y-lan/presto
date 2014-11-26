@@ -579,10 +579,18 @@ public class ExpressionAnalyzer
             if (node.getWindow().isPresent()) {
                 for (Expression expression : node.getWindow().get().getPartitionBy()) {
                     process(expression, context);
+                    Type type = expressionTypes.get(expression);
+                    if (!type.isComparable()) {
+                        throw new SemanticException(TYPE_MISMATCH, node, "%s is not comparable, and therefore cannot be used in window function PARTITION BY", type);
+                    }
                 }
 
                 for (SortItem sortItem : node.getWindow().get().getOrderBy()) {
                     process(sortItem.getSortKey(), context);
+                    Type type = expressionTypes.get(sortItem.getSortKey());
+                    if (!type.isComparable()) {
+                        throw new SemanticException(TYPE_MISMATCH, node, "%s is not comparable, and therefore cannot be used in window function ORDER BY", type);
+                    }
                 }
             }
 
@@ -602,6 +610,9 @@ public class ExpressionAnalyzer
                 Expression expression = node.getArguments().get(i);
                 Type type = metadata.getType(function.getArgumentTypes().get(i));
                 checkNotNull(type, "Type %s not found", function.getArgumentTypes().get(i));
+                if (node.isDistinct() && !type.isComparable()) {
+                    throw new SemanticException(TYPE_MISMATCH, node, "DISTINCT can only be applied to comparable types (actual: %s)", type);
+                }
                 coerceType(context, expression, type, String.format("Function %s argument %d", function.getSignature(), i));
             }
             resolvedFunctions.put(node, function);
