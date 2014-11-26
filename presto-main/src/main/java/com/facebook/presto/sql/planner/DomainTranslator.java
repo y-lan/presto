@@ -24,6 +24,7 @@ import com.facebook.presto.spi.SortedRangeSet;
 import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.spi.type.DoubleType;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.tree.AstVisitor;
 import com.facebook.presto.sql.tree.BetweenPredicate;
 import com.facebook.presto.sql.tree.BooleanLiteral;
@@ -43,6 +44,8 @@ import com.facebook.presto.sql.tree.QualifiedNameReference;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.math.DoubleMath;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -329,6 +332,13 @@ public final class DomainTranslator
             if (value instanceof Long && columnType.equals(DoubleType.DOUBLE)) {
                 value = ((Long) value).doubleValue();
             }
+            if (value instanceof Long && columnType.equals(VarcharType.VARCHAR)) {
+                value = Slices.utf8Slice(value.toString());
+            }
+            if (value instanceof Slice && columnType.equals(BIGINT)) {
+                value = Long.parseLong(((Slice) value).toStringUtf8());
+            }
+
             verifyType(columnType, value);
             return createComparisonExtractionResult(node.getType(), columnHandle, columnType, objectToComparable(value), complement);
         }
