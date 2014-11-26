@@ -101,6 +101,12 @@ public class IntervalLiteral
     }
 
     @Override
+    public Object getValueObject()
+    {
+        return getValue();
+    }
+
+    @Override
     public int hashCode()
     {
         return Objects.hash(value, sign, startField, endField);

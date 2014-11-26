@@ -48,6 +48,12 @@ public final class GenericLiteral
     }
 
     @Override
+    public Object getValueObject()
+    {
+        return getValue();
+    }
+
+    @Override
     public int hashCode()
     {
         return Objects.hash(value, type);

@@ -13,9 +13,13 @@
  */
 package com.facebook.presto.metadata;
 
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.type.TypeSignature;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.facebook.presto.metadata.FunctionRegistry.mangleOperatorName;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -89,5 +93,11 @@ public abstract class ParametricOperator
     {
         // Operators are internal, and don't need a description
         return "";
+    }
+
+    @Override
+    public FunctionInfo specialize(Map<String, Type> types, List<TypeSignature> typeSignatures, TypeManager typeManager)
+    {
+        return specialize(types, typeSignatures.size(), typeManager);
     }
 }

@@ -21,4 +21,6 @@ public abstract class Literal
     {
         return visitor.visitLiteral(this, context);
     }
+
+    public abstract Object getValueObject();
 }

@@ -46,6 +46,7 @@ import com.facebook.presto.sql.tree.IntervalLiteral;
 import com.facebook.presto.sql.tree.IsNotNullPredicate;
 import com.facebook.presto.sql.tree.IsNullPredicate;
 import com.facebook.presto.sql.tree.LikePredicate;
+import com.facebook.presto.sql.tree.Literal;
 import com.facebook.presto.sql.tree.LogicalBinaryExpression;
 import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.NegativeExpression;
@@ -586,16 +587,13 @@ public class ExpressionAnalyzer
             }
 
             ImmutableList.Builder<TypeSignature> argumentTypes = ImmutableList.builder();
-            ImmutableList.Builder<String> literalValues = ImmutableList.builder();
             for (Expression expression : node.getArguments()) {
                 TypeSignature typeSignature = process(expression, context).getTypeSignature();
-                if (expression instanceof StringLiteral) {
-                    StringLiteral stringLiteral = (StringLiteral) expression;
-                    typeSignature = new TypeSignature(typeSignature.getBase(),
-                        typeSignature.getParameters(),
-                        ImmutableList.<Object>of(stringLiteral.getValue())
-                        );
+                if (expression instanceof Literal) {
+                    Object valueObject = ((Literal) expression).getValueObject();
+                    typeSignature = new TypeSignature(typeSignature.getBase(), typeSignature.getParameters(), typeSignature.getLiteralParameters(), valueObject);
                 }
+
                 argumentTypes.add(typeSignature);
             }
 

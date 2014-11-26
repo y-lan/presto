@@ -44,6 +44,12 @@ public class LongLiteral
     }
 
     @Override
+    public Object getValueObject()
+    {
+        return new Long(this.getValue());
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (this == o) {

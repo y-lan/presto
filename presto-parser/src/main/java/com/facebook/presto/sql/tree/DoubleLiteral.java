@@ -38,6 +38,12 @@ public class DoubleLiteral
     }
 
     @Override
+    public Object getValueObject()
+    {
+        return new Double(getValue());
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (this == o) {

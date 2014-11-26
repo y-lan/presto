@@ -39,6 +39,12 @@ public class TimestampLiteral
     }
 
     @Override
+    public Object getValueObject()
+    {
+        return getValue();
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (this == o) {

@@ -46,6 +46,12 @@ public class BooleanLiteral
     }
 
     @Override
+    public Object getValueObject()
+    {
+        return new Boolean(getValue());
+    }
+
+    @Override
     public int hashCode()
     {
         return Objects.hashCode(value);

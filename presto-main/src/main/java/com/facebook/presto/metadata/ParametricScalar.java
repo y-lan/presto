@@ -13,6 +13,13 @@
  */
 package com.facebook.presto.metadata;
 
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.type.TypeSignature;
+
+import java.util.List;
+import java.util.Map;
+
 public abstract class ParametricScalar
         implements ParametricFunction
 {
@@ -44,5 +51,11 @@ public abstract class ParametricScalar
     public final boolean isUnbound()
     {
         return true;
+    }
+
+    @Override
+    public FunctionInfo specialize(Map<String, Type> types, List<TypeSignature> typeSignatures, TypeManager typeManager)
+    {
+        return specialize(types, typeSignatures.size(), typeManager);
     }
 }

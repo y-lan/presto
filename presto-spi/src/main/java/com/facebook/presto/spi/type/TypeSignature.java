@@ -29,8 +29,14 @@ public class TypeSignature
     private final String base;
     private final List<TypeSignature> parameters;
     private final List<Object> literalParameters;
+    private final Object literalValue;
 
     public TypeSignature(String base, List<TypeSignature> parameters, List<Object> literalParameters)
+    {
+        this(base, parameters, literalParameters, null);
+    }
+
+    public TypeSignature(String base, List<TypeSignature> parameters, List<Object> literalParameters, Object literalValue)
     {
         checkArgument(base != null, "base is null");
         this.base = base;
@@ -43,6 +49,7 @@ public class TypeSignature
         }
         this.parameters = unmodifiableList(new ArrayList<>(parameters));
         this.literalParameters = unmodifiableList(new ArrayList<>(literalParameters));
+        this.literalValue = literalValue;
     }
 
     private static boolean validateName(String name)
@@ -107,6 +114,11 @@ public class TypeSignature
     public List<Object> getLiteralParameters()
     {
         return literalParameters;
+    }
+
+    public Object getLiteralValue()
+    {
+        return literalValue;
     }
 
     @JsonCreator

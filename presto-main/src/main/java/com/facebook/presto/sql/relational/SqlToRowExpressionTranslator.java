@@ -54,12 +54,14 @@ import com.facebook.presto.sql.tree.TimeLiteral;
 import com.facebook.presto.sql.tree.TimestampLiteral;
 import com.facebook.presto.sql.tree.WhenClause;
 import com.facebook.presto.type.UnknownType;
+import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import io.airlift.slice.Slices;
 
+import javax.annotation.Nullable;
 import java.nio.charset.StandardCharsets;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -261,9 +263,24 @@ public final class SqlToRowExpressionTranslator
                     .toList();
 
             List<TypeSignature> argumentTypes = FluentIterable.from(arguments)
-                    .transform(typeGetter())
-                    .transform(typeSignatureGetter())
+                    .transform(new Function<RowExpression, TypeSignature>()
+                    {
+                        @Nullable
+                        @Override
+                        public TypeSignature apply(RowExpression input)
+                        {
+                            TypeSignature signature = typeSignatureGetter().apply(typeGetter().apply(input));
+                            if (input instanceof ConstantExpression) {
+                                ConstantExpression constantExpression = (ConstantExpression) input;
+                                return new TypeSignature(signature.getBase(), signature.getParameters(), signature.getLiteralParameters(), constantExpression.getValue());
+                            }
+                            else {
+                                return signature;
+                            }
+                        }
+                    })
                     .toList();
+
             Signature signature = new Signature(node.getName().getSuffix(), types.get(node).getTypeSignature(), argumentTypes);
 
             return call(signature, types.get(node), arguments);

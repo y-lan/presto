@@ -185,6 +185,12 @@ public final class FunctionInfo
         return this;
     }
 
+    @Override
+    public FunctionInfo specialize(Map<String, Type> types, List<TypeSignature> typeSignatures, TypeManager typeManager)
+    {
+        return specialize(types, typeSignatures.size(), typeManager);
+    }
+
     public WindowFunctionDefinition bindWindowFunction(List<Integer> inputs)
     {
         checkState(isWindow, "not a window function");

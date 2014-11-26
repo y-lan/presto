@@ -623,20 +623,16 @@ public class ExpressionInterpreter
             for (Expression expression : node.getArguments()) {
                 Object value = process(expression, context);
                 Type type = expressionTypes.get(expression);
+                argumentTypes.add(type);
                 TypeSignature signature = typeSignatureGetter().apply(type);
-                if (expression instanceof StringLiteral) {
-                    StringLiteral stringLiteral = (StringLiteral) expression;
-                    argumentSignature.add(new TypeSignature(
-                            signature.getBase(),
-                            signature.getParameters(),
-                            ImmutableList.<Object>of(stringLiteral.getValue())
-                    ));
+                argumentValues.add(value);
+                if (expression instanceof Literal) {
+                    Object valueObject = ((Literal) expression).getValueObject();
+                    argumentSignature.add(new TypeSignature(signature.getBase(), signature.getParameters(), signature.getLiteralParameters(), valueObject));
                 }
                 else {
                     argumentSignature.add(signature);
                 }
-                argumentValues.add(value);
-                argumentTypes.add(type);
             }
             FunctionInfo function = metadata.resolveFunction(node.getName(), argumentSignature, false);
             for (int i = 0; i < argumentValues.size(); i++) {

@@ -333,30 +333,8 @@ public class FunctionRegistry
         for (ParametricFunction function : candidates) {
             Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, false, typeManager);
             if (boundTypeParameters != null) {
-                if (boundTypeParameters.size() > 0 && function.getSignature().getName().equals("json_get")) {
-                    if (parameterTypes.size() == 2) {
-                        TypeSignature row = parameterTypes.get(0);
-                        TypeSignature key = parameterTypes.get(1);
-                        if (row.getBase().equals(StandardTypes.ROW) && key.getBase().equals(StandardTypes.VARCHAR) && key.getLiteralParameters() != null) {
-                            RowType rowType = (RowType) (resolvedTypes.get(0));
-                            final String field = (String) (key.getLiteralParameters().get(0));
-                            RowType.RowField retField = Iterables.find(rowType.getFields(), new Predicate<RowType.RowField>()
-                            {
-                                @Override
-                                public boolean apply(RowType.RowField input)
-                                {
-                                    return input.getName().equals(field);
-                                }
-                            }, null);
-                            if (retField != null) {
-                                boundTypeParameters.put("E", retField.getType());
-                            }
-                        }
-                    }
-                }
-
                 checkArgument(match == null, "Ambiguous call to %s with parameters %s", name, parameterTypes);
-                match = function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager);
+                match = function.specialize(boundTypeParameters, parameterTypes, typeManager);
             }
         }
 
@@ -447,7 +425,7 @@ public class FunctionRegistry
             List<Type> argumentTypes = resolveTypes(signature.getArgumentTypes(), typeManager);
             Map<String, Type> boundTypeParameters = operator.getSignature().bindTypeParameters(returnType, argumentTypes, false, typeManager);
             if (boundTypeParameters != null) {
-                return operator.specialize(boundTypeParameters, signature.getArgumentTypes().size(), typeManager);
+                return operator.specialize(boundTypeParameters, signature.getArgumentTypes(), typeManager);
             }
         }
         return null;
