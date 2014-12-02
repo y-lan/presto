@@ -47,6 +47,15 @@ public class HivePartition
         this.bucket = Optional.absent();
     }
 
+    public HivePartition(SchemaTableName tableName, TupleDomain<HiveColumnHandle> effectivePredicate, Optional<HiveBucket> bucket)
+    {
+        this.tableName = checkNotNull(tableName, "tableName is null");
+        this.effectivePredicate = checkNotNull(effectivePredicate, "effectivePredicate is null");
+        this.partitionId = UNPARTITIONED_ID;
+        this.keys = ImmutableMap.of();
+        this.bucket = checkNotNull(bucket, "bucket number is null");
+    }
+
     public HivePartition(SchemaTableName tableName,
             TupleDomain<HiveColumnHandle> effectivePredicate,
             String partitionId,
