@@ -104,7 +104,7 @@
         </artifact>
     </artifactSet>
 
-    <artifactSet to="plugin/tdjob">
+    <artifactSet to="plugin/phoenix">
         <artifact id="${project.groupId}:presto-phoenix:zip:${project.version}">
             <unpack />
         </artifact>
