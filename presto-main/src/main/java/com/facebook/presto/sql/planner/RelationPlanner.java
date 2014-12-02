@@ -19,6 +19,7 @@ import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.metadata.TableHandle;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.EquiJoinClause;
 import com.facebook.presto.sql.analyzer.Field;
@@ -38,6 +39,7 @@ import com.facebook.presto.sql.planner.plan.UnnestNode;
 import com.facebook.presto.sql.planner.plan.ValuesNode;
 import com.facebook.presto.sql.tree.AliasedRelation;
 import com.facebook.presto.sql.tree.ArithmeticExpression;
+import com.facebook.presto.sql.tree.Cast;
 import com.facebook.presto.sql.tree.CoalesceExpression;
 import com.facebook.presto.sql.tree.DefaultTraversalVisitor;
 import com.facebook.presto.sql.tree.Expression;
@@ -61,6 +63,7 @@ import com.facebook.presto.type.ArrayType;
 import com.facebook.presto.type.MapType;
 import com.facebook.presto.util.IterableTransformer;
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -226,6 +229,36 @@ class RelationPlanner
                 Symbol leftSymbol = leftPlanBuilder.translate(clause.getLeft());
                 Symbol rightSymbol = rightPlanBuilder.translate(clause.getRight());
 
+                Map<Symbol, Type> types = symbolAllocator.getTypes();
+                if (types.get(leftSymbol).equals(BIGINT) && types.get(rightSymbol).equals(VarcharType.VARCHAR)) {
+                    analysis.addCoercion(clause.getLeft(), VarcharType.VARCHAR);
+                    TranslationMap translations = new TranslationMap(leftPlanBuilder.getRelationPlan(), analysis);
+                    translations.copyMappingsFrom(leftPlanBuilder.getTranslations());
+                    ImmutableMap.Builder<Symbol, Expression> projections = ImmutableMap.builder();
+                    for (Symbol symbol : leftPlanBuilder.getRoot().getOutputSymbols()) {
+                        Expression expression = new QualifiedNameReference(symbol.toQualifiedName());
+                        projections.put(symbol, expression);
+                    }
+                    Map<Symbol, Expression> coerce = coerce(ImmutableList.<Expression>of(clause.getLeft()), leftPlanBuilder, translations);
+                    projections.putAll(coerce);
+                    leftPlanBuilder = new PlanBuilder(translations, new ProjectNode(idAllocator.getNextId(), leftPlanBuilder.getRoot(), projections.build()), leftPlanBuilder.getSampleWeight());
+                    rightSymbol = translations.get(clause.getLeft());
+                }
+                else if (types.get(leftSymbol).equals(VarcharType.VARCHAR) && types.get(rightSymbol).equals(BIGINT)) {
+                    analysis.addCoercion(clause.getRight(), VarcharType.VARCHAR);
+                    TranslationMap translations = new TranslationMap(rightPlanBuilder.getRelationPlan(), analysis);
+                    translations.copyMappingsFrom(rightPlanBuilder.getTranslations());
+                    ImmutableMap.Builder<Symbol, Expression> projections = ImmutableMap.builder();
+                    for (Symbol symbol : rightPlanBuilder.getRoot().getOutputSymbols()) {
+                        Expression expression = new QualifiedNameReference(symbol.toQualifiedName());
+                        projections.put(symbol, expression);
+                    }
+                    Map<Symbol, Expression> coerce = coerce(ImmutableList.<Expression>of(clause.getRight()), rightPlanBuilder, translations);
+                    projections.putAll(coerce);
+                    rightPlanBuilder = new PlanBuilder(translations, new ProjectNode(idAllocator.getNextId(), rightPlanBuilder.getRoot(), projections.build()), rightPlanBuilder.getSampleWeight());
+                    rightSymbol = translations.get(clause.getRight());
+                }
+
                 clauses.add(new JoinNode.EquiJoinClause(leftSymbol, rightSymbol));
             }
         }
@@ -250,6 +283,24 @@ class RelationPlanner
         }
 
         return new RelationPlan(root, outputDescriptor, outputSymbols, sampleWeight);
+    }
+
+    private Map<Symbol, Expression> coerce(Iterable<? extends Expression> expressions, PlanBuilder subPlan, TranslationMap translations)
+    {
+        ImmutableMap.Builder<Symbol, Expression> projections = ImmutableMap.builder();
+
+        for (Expression expression : expressions) {
+            Type coercion = analysis.getCoercion(expression);
+            Symbol symbol = symbolAllocator.newSymbol(expression, Objects.firstNonNull(coercion, analysis.getType(expression)));
+            Expression rewritten = subPlan.rewrite(expression);
+            if (coercion != null) {
+                rewritten = new Cast(rewritten, coercion.getTypeSignature().toString());
+            }
+            projections.put(symbol, rewritten);
+            translations.put(expression, symbol);
+        }
+
+        return projections.build();
     }
 
     private RelationPlan planCrossJoinUnnest(RelationPlan leftPlan, Join joinNode, Unnest node)
