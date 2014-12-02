@@ -542,6 +542,19 @@ public final class DateTimeFunctions
 
     @ScalarFunction
     @SqlType(StandardTypes.TIMESTAMP)
+    public static long dateParse(ConnectorSession session, @SqlType(StandardTypes.VARCHAR) Slice dateTime)
+    {
+        if (dateTime.length() == 8) {
+            return dateParse(session, dateTime, DATEFORMAT_B);
+        }
+        else if (dateTime.length() == 10) {
+            return dateParse(session, dateTime, DATEFORMAT_A);
+        }
+        throw new PrestoException(INVALID_FUNCTION_ARGUMENT, new IllegalArgumentException("Boss, I can't recognize your date string T__T."));
+    }
+
+    @ScalarFunction
+    @SqlType(StandardTypes.TIMESTAMP)
     public static long dateParse(ConnectorSession session, @SqlType(StandardTypes.VARCHAR) Slice dateTime, @SqlType(StandardTypes.VARCHAR) Slice formatString)
     {
         DateTimeFormatter formatter = DATETIME_FORMATTER_CACHE.get(formatString)
