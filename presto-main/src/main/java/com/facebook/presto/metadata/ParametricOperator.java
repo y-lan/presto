@@ -89,10 +89,10 @@ public abstract class ParametricOperator
     }
 
     @Override
-    public String getDescription()
+    public final String getDescription()
     {
         // Operators are internal, and don't need a description
-        return "";
+        return null;
     }
 
     @Override

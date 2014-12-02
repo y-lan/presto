@@ -17,9 +17,9 @@ import com.facebook.presto.byteCode.DynamicClassLoader;
 import com.facebook.presto.metadata.FunctionInfo;
 import com.facebook.presto.metadata.ParametricAggregation;
 import com.facebook.presto.metadata.Signature;
-import com.facebook.presto.operator.aggregation.state.MaxByState;
-import com.facebook.presto.operator.aggregation.state.MaxByStateFactory;
-import com.facebook.presto.operator.aggregation.state.MaxByStateSerializer;
+import com.facebook.presto.operator.aggregation.state.MaxOrMinByState;
+import com.facebook.presto.operator.aggregation.state.MaxOrMinByStateFactory;
+import com.facebook.presto.operator.aggregation.state.MaxOrMinByStateSerializer;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.type.Type;
@@ -44,9 +44,9 @@ public class MaxBy
 {
     public static final MaxBy MAX_BY = new MaxBy();
     private static final String NAME = "max_by";
-    private static final Method OUTPUT_FUNCTION = method(MaxBy.class, "output", MaxByState.class, BlockBuilder.class);
-    private static final Method INPUT_FUNCTION = method(MaxBy.class, "input", MaxByState.class, Block.class, Block.class, int.class);
-    private static final Method COMBINE_FUNCTION = method(MaxBy.class, "combine", MaxByState.class, MaxByState.class);
+    private static final Method OUTPUT_FUNCTION = method(MaxBy.class, "output", MaxOrMinByState.class, BlockBuilder.class);
+    private static final Method INPUT_FUNCTION = method(MaxBy.class, "input", MaxOrMinByState.class, Block.class, Block.class, int.class);
+    private static final Method COMBINE_FUNCTION = method(MaxBy.class, "combine", MaxOrMinByState.class, MaxOrMinByState.class);
     private static final Signature SIGNATURE = new Signature(NAME, ImmutableList.of(orderableTypeParameter("K"), typeParameter("V")), "V", ImmutableList.of("V", "K"), false, false);
 
     @Override
@@ -75,12 +75,12 @@ public class MaxBy
     {
         DynamicClassLoader classLoader = new DynamicClassLoader(MaxBy.class.getClassLoader());
 
-        MaxByStateSerializer stateSerializer = new MaxByStateSerializer();
+        MaxOrMinByStateSerializer stateSerializer = new MaxOrMinByStateSerializer();
         Type intermediateType = stateSerializer.getSerializedType();
 
         List<Type> inputTypes = ImmutableList.of(valueType, keyType);
 
-        MaxByStateFactory stateFactory = new MaxByStateFactory(valueType, keyType);
+        MaxOrMinByStateFactory stateFactory = new MaxOrMinByStateFactory(valueType, keyType);
         AggregationMetadata metadata = new AggregationMetadata(
                 generateAggregationName(NAME, valueType, inputTypes),
                 createInputParameterMetadata(valueType, keyType),
@@ -89,7 +89,7 @@ public class MaxBy
                 null,
                 COMBINE_FUNCTION,
                 OUTPUT_FUNCTION,
-                MaxByState.class,
+                MaxOrMinByState.class,
                 stateSerializer,
                 stateFactory,
                 valueType,
@@ -104,7 +104,7 @@ public class MaxBy
         return ImmutableList.of(new ParameterMetadata(STATE), new ParameterMetadata(NULLABLE_INPUT_CHANNEL, value), new ParameterMetadata(NULLABLE_INPUT_CHANNEL, key), new ParameterMetadata(BLOCK_INDEX));
     }
 
-    public static void input(MaxByState state, Block value, Block key, int position)
+    public static void input(MaxOrMinByState state, Block value, Block key, int position)
     {
         if (state.getKey() == null || state.getKey().isNull(0)) {
             state.setKey(key.getSingleValueBlock(position));
@@ -116,7 +116,7 @@ public class MaxBy
         }
     }
 
-    public static void combine(MaxByState state, MaxByState otherState)
+    public static void combine(MaxOrMinByState state, MaxOrMinByState otherState)
     {
         if (state.getKey() == null) {
             state.setKey(otherState.getKey());
@@ -128,7 +128,7 @@ public class MaxBy
         }
     }
 
-    public static void output(MaxByState state, BlockBuilder out)
+    public static void output(MaxOrMinByState state, BlockBuilder out)
     {
         if (state.getValue() == null) {
             out.appendNull();

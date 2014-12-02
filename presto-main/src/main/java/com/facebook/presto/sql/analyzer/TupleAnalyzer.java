@@ -80,6 +80,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.IdentityHashMap;
@@ -113,6 +114,7 @@ import static com.facebook.presto.sql.analyzer.SemanticErrorCode.VIEW_PARSE_ERRO
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.WILDCARD_WITHOUT_FROM;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.WINDOW_REQUIRES_OVER;
 import static com.facebook.presto.sql.planner.ExpressionInterpreter.expressionOptimizer;
+import static com.facebook.presto.sql.tree.ComparisonExpression.Type.EQUAL;
 import static com.facebook.presto.type.UnknownType.UNKNOWN;
 import static com.facebook.presto.util.Types.checkType;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -121,7 +123,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.Iterables.elementsEqual;
 import static com.google.common.collect.Iterables.transform;
 
-class TupleAnalyzer
+public class TupleAnalyzer
         extends DefaultTraversalVisitor<TupleDescriptor, AnalysisContext>
 {
     private final Analysis analysis;
@@ -369,8 +371,23 @@ class TupleAnalyzer
 
         for (Relation relation : Iterables.skip(node.getRelations(), 1)) {
             TupleDescriptor descriptor = analyzer.process(relation, context);
-            if (!elementsEqual(transform(outputDescriptor.getVisibleFields(), typeGetter()), transform(descriptor.getVisibleFields(), typeGetter()))) {
-                throw new SemanticException(MISMATCHED_SET_COLUMN_TYPES, node, "Union query terms have mismatched columns");
+            int outputFieldSize = outputDescriptor.getVisibleFields().size();
+            int descFieldSize = descriptor.getVisibleFields().size();
+            if (outputFieldSize != descFieldSize) {
+                throw new SemanticException(MISMATCHED_SET_COLUMN_TYPES,
+                                            node,
+                                            "union query has different number of fields: %d, %d",
+                                            outputFieldSize, descFieldSize);
+            }
+            for (int i = 0; i < descriptor.getVisibleFields().size(); i++) {
+                Type outputFieldType = outputDescriptor.getFieldByIndex(i).getType();
+                Type descFieldType = descriptor.getFieldByIndex(i).getType();
+                if (outputFieldType != descFieldType) {
+                    throw new SemanticException(TYPE_MISMATCH,
+                                                node,
+                                                "column %d in union query has incompatible types: %s, %s",
+                                                i, outputFieldType.getDisplayName(), descFieldType.getDisplayName());
+                }
             }
         }
 
@@ -424,7 +441,7 @@ class TupleAnalyzer
             // TODO: implement proper "using" semantics with respect to output columns
             List<String> columns = ((JoinUsing) criteria).getColumns();
 
-            ImmutableList.Builder<EquiJoinClause> builder = ImmutableList.builder();
+            List<Expression> expressions = new ArrayList<>();
             for (String column : columns) {
                 Expression leftExpression = new QualifiedNameReference(QualifiedName.of(column));
                 Expression rightExpression = new QualifiedNameReference(QualifiedName.of(column));
@@ -448,10 +465,10 @@ class TupleAnalyzer
                 checkState(leftExpressionAnalysis.getSubqueryInPredicates().isEmpty(), "INVARIANT");
                 checkState(rightExpressionAnalysis.getSubqueryInPredicates().isEmpty(), "INVARIANT");
 
-                builder.add(new EquiJoinClause(leftExpression, rightExpression));
+                expressions.add(new ComparisonExpression(EQUAL, leftExpression, rightExpression));
             }
 
-            analysis.setEquijoinCriteria(node, builder.build());
+            analysis.setJoinCriteria(node, ExpressionUtils.and(expressions));
         }
         else if (criteria instanceof JoinOn) {
             Expression expression = ((JoinOn) criteria).getExpression();
@@ -472,10 +489,10 @@ class TupleAnalyzer
             if (!(optimizedExpression instanceof Expression) && optimizedExpression instanceof Boolean) {
                 // If the JoinOn clause evaluates to a boolean expression, simulate a cross join by adding the relevant redundant expression
                 if (optimizedExpression.equals(Boolean.TRUE)) {
-                    optimizedExpression = new ComparisonExpression(ComparisonExpression.Type.EQUAL, new LongLiteral("0"), new LongLiteral("0"));
+                    optimizedExpression = new ComparisonExpression(EQUAL, new LongLiteral("0"), new LongLiteral("0"));
                 }
                 else {
-                    optimizedExpression = new ComparisonExpression(ComparisonExpression.Type.EQUAL, new LongLiteral("0"), new LongLiteral("1"));
+                    optimizedExpression = new ComparisonExpression(EQUAL, new LongLiteral("0"), new LongLiteral("1"));
                 }
             }
 
@@ -483,17 +500,12 @@ class TupleAnalyzer
                 throw new SemanticException(TYPE_MISMATCH, node, "Join clause must be a boolean expression");
             }
 
-            ImmutableList.Builder<EquiJoinClause> clauses = ImmutableList.builder();
             for (Expression conjunct : ExpressionUtils.extractConjuncts((Expression) optimizedExpression)) {
                 if (!(conjunct instanceof ComparisonExpression)) {
                     throw new SemanticException(NOT_SUPPORTED, node, "Non-equi joins not supported: %s", conjunct);
                 }
 
                 ComparisonExpression comparison = (ComparisonExpression) conjunct;
-                if (comparison.getType() != ComparisonExpression.Type.EQUAL) {
-                    throw new SemanticException(NOT_SUPPORTED, node, "Non-equi joins not supported: %s", conjunct);
-                }
-
                 Set<QualifiedName> firstDependencies = DependencyExtractor.extract(comparison.getLeft());
                 Set<QualifiedName> secondDependencies = DependencyExtractor.extract(comparison.getRight());
 
@@ -530,11 +542,9 @@ class TupleAnalyzer
                         context,
                         rightExpression);
                 analysis.addJoinInPredicates(node, new Analysis.JoinInPredicates(leftExpressionAnalysis.getSubqueryInPredicates(), rightExpressionAnalysis.getSubqueryInPredicates()));
-
-                clauses.add(new EquiJoinClause(leftExpression, rightExpression));
             }
 
-            analysis.setEquijoinCriteria(node, clauses.build());
+            analysis.setJoinCriteria(node, (Expression) optimizedExpression);
         }
         else {
             throw new UnsupportedOperationException("unsupported join criteria: " + criteria.getClass().getName());
@@ -729,6 +739,19 @@ class TupleAnalyzer
                     }
 
                     orderByExpression = outputExpressions.get((int) (ordinal - 1));
+
+                    if (orderByExpression.isExpression()) {
+                        Type type = analysis.getType(orderByExpression.getExpression());
+                        if (!type.isOrderable()) {
+                            throw new SemanticException(TYPE_MISMATCH, node, "The type of expression in position %s is not orderable (actual: %s), and therefore cannot be used in ORDER BY: %s", ordinal, type, orderByExpression);
+                        }
+                    }
+                    else {
+                        Type type = tupleDescriptor.getFieldByIndex(orderByExpression.getFieldIndex()).getType();
+                        if (!type.isOrderable()) {
+                            throw new SemanticException(TYPE_MISMATCH, node, "The type of expression in position %s is not orderable (actual: %s), and therefore cannot be used in ORDER BY", ordinal, type);
+                        }
+                    }
                 }
 
                 // otherwise, just use the expression as is
@@ -746,6 +769,11 @@ class TupleAnalyzer
                             context,
                             orderByExpression.getExpression());
                     analysis.addInPredicates(node, expressionAnalysis.getSubqueryInPredicates());
+
+                    Type type = expressionAnalysis.getType(orderByExpression.getExpression());
+                    if (!type.isOrderable()) {
+                        throw new SemanticException(TYPE_MISMATCH, node, "Type %s is not orderable, and therefore cannot be used in ORDER BY: %s", type, expression);
+                    }
                 }
 
                 orderByExpressionsBuilder.add(orderByExpression);
@@ -865,6 +893,10 @@ class TupleAnalyzer
                 for (Field field : fields) {
                     int fieldIndex = tupleDescriptor.indexOf(field);
                     outputExpressionBuilder.add(new FieldOrExpression(fieldIndex));
+
+                    if (node.getSelect().isDistinct() && !field.getType().isComparable())  {
+                        throw new SemanticException(TYPE_MISMATCH, node.getSelect(), "DISTINCT can only be applied to comparable types (actual: %s)", field.getType());
+                    }
                 }
             }
             else if (item instanceof SingleColumn) {
@@ -879,6 +911,11 @@ class TupleAnalyzer
                         column.getExpression());
                 analysis.addInPredicates(node, expressionAnalysis.getSubqueryInPredicates());
                 outputExpressionBuilder.add(new FieldOrExpression(column.getExpression()));
+
+                Type type = expressionAnalysis.getType(column.getExpression());
+                if (node.getSelect().isDistinct() && !type.isComparable())  {
+                    throw new SemanticException(TYPE_MISMATCH, node.getSelect(), "DISTINCT can only be applied to comparable types (actual: %s): %s", type, column.getExpression());
+                }
             }
             else {
                 throw new IllegalArgumentException("Unsupported SelectItem type: " + item.getClass().getName());
