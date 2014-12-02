@@ -103,4 +103,10 @@
             <unpack />
         </artifact>
     </artifactSet>
+
+    <artifactSet to="plugin/tdjob">
+        <artifact id="${project.groupId}:presto-phoenix:zip:${project.version}">
+            <unpack />
+        </artifact>
+    </artifactSet>
 </runtime>

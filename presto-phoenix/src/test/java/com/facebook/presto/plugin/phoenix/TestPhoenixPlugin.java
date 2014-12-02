@@ -51,6 +51,8 @@ public class TestPhoenixPlugin
             System.out.println(sb.toString());
         }
         System.out.println("\n");
+
+        resultSet.close();
     }
 
     @Test
@@ -67,7 +69,19 @@ public class TestPhoenixPlugin
         System.out.println("schemas");
         print(connection.getMetaData().getSchemas());
         System.out.println("tables");
-        print(connection.getMetaData().getTables(null, "", null, null));
+        print(connection.getMetaData().getTables(null, null, null, null));
+        System.out.println("table stock");
+        print(connection.getMetaData().getTables(null, null, "STOCK_SYMBOL", null));
+        System.out.println("table test");
+        print(connection.getMetaData().getTables("", "", "test", null));
+        System.out.println("primary key for test table");
+        print(connection.getMetaData().getPrimaryKeys("", "", "test"));
+
+        System.out.println("columns");
+        print(connection.getMetaData().getColumns(null, "", "STOCK_SYMBOL", null));
+        System.out.println("columns");
+        print(connection.getMetaData().getColumns(null, "LAN", "STOCK_SYMBOL", null));
+        print(connection.getMetaData().getColumns(null, null, "test", null));
 
         connection.close();
     }
