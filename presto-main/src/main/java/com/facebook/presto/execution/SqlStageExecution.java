@@ -141,6 +141,7 @@ public class SqlStageExecution
     private final Distribution addSplitDistribution = new Distribution();
 
     private final NodeSelector nodeSelector;
+    private final NodeScheduler nodeScheduler;
     private final NodeTaskMap nodeTaskMap;
 
     // Note: atomic is needed to assure thread safety between constructor and scheduler thread
@@ -242,6 +243,7 @@ public class SqlStageExecution
 
             String dataSourceName = dataSource.isPresent() ? dataSource.get().getDataSourceName() : null;
             this.nodeSelector = nodeScheduler.createNodeSelector(dataSourceName);
+            this.nodeScheduler = nodeScheduler;
             this.nodeTaskMap = nodeTaskMap;
             stageState = new StateMachine<>("stage " + stageId, this.executor, StageState.PLANNED);
             stageState.addStateChangeListener(new StateChangeListener<StageState>()
@@ -650,6 +652,7 @@ public class SqlStageExecution
                 while (!pendingSplits.isEmpty() && !getState().isDone()) {
                     Multimap<Node, Split> splitAssignment = nodeSelector.computeAssignments(pendingSplits, tasks.values());
                     pendingSplits = ImmutableSet.copyOf(Sets.difference(pendingSplits, ImmutableSet.copyOf(splitAssignment.values())));
+                    log.info("node scheduler stats: %d, %d, %d", nodeScheduler.getScheduleLocal(), nodeScheduler.getScheduleRack(), nodeScheduler.getScheduleRandom());
 
                     assignSplits(nextTaskId, splitAssignment);
 
