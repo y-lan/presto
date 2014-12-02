@@ -34,6 +34,8 @@ public final class StringFunctions
 {
     private StringFunctions() {}
 
+    private static final Slice pipe = Slices.utf8Slice("-");
+
     @Description("convert unicode code point to a string")
     @ScalarFunction
     @SqlType(StandardTypes.VARCHAR)
@@ -293,5 +295,19 @@ public final class StringFunctions
     public static Slice least(@SqlType(StandardTypes.VARCHAR) Slice value1, @SqlType(StandardTypes.VARCHAR) Slice value2)
     {
         return value1.compareTo(value2) < 0 ? value1 : value2;
+    }
+
+    @Description("quick hack for converting YYYYMMDD string to YYYY-MM-DD")
+    @ScalarFunction
+    @SqlType(StandardTypes.VARCHAR)
+    public static Slice fmtDt(@SqlType(StandardTypes.VARCHAR) Slice yyyymmdd)
+    {
+        Slice concat = Slices.allocate(10);
+        concat.setBytes(0, yyyymmdd, 0, 4);
+        concat.setBytes(4, pipe);
+        concat.setBytes(5, yyyymmdd, 4, 2);
+        concat.setBytes(7, pipe);
+        concat.setBytes(8, yyyymmdd, 6, 2);
+        return concat;
     }
 }
