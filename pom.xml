@@ -82,6 +82,7 @@
         <module>presto-server</module>
         <module>presto-docs</module>
         <module>presto-verifier</module>
+        <module>presto-phoenix</module>
     </modules>
 
     <dependencyManagement>
@@ -480,6 +481,12 @@
                 <groupId>org.postgresql</groupId>
                 <artifactId>postgresql</artifactId>
                 <version>9.3-1102-jdbc41</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.facebook.presto.phoenix</groupId>
+                <artifactId>phoenix-core</artifactId>
+                <version>0.1-SNAPSHOT</version>
             </dependency>
 
             <dependency>
