@@ -492,8 +492,8 @@
 
             <dependency>
                 <groupId>com.facebook.presto.phoenix</groupId>
-                <artifactId>phoenix-core</artifactId>
-                <version>0.1-SNAPSHOT</version>
+                <artifactId>presto-apache-phoenix</artifactId>
+                <version>0.2-SNAPSHOT</version>
             </dependency>
 
             <dependency>
