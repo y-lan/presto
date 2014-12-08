@@ -15,13 +15,16 @@ package com.facebook.presto.plugin.phoenix;
 
 import com.facebook.presto.plugin.jdbc.BaseJdbcClient;
 import com.facebook.presto.plugin.jdbc.BaseJdbcConfig;
+import com.facebook.presto.plugin.jdbc.JdbcColumnHandle;
 import com.facebook.presto.plugin.jdbc.JdbcConnectorId;
+import com.facebook.presto.plugin.jdbc.JdbcSplit;
 import com.facebook.presto.plugin.jdbc.JdbcTableHandle;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
+import io.airlift.log.Logger;
 import org.apache.phoenix.jdbc.PhoenixDriver;
 
 import javax.annotation.Nullable;
@@ -40,6 +43,8 @@ import static java.util.Locale.ENGLISH;
 public class PhoenixClient
         extends BaseJdbcClient
 {
+    private static final Logger log = Logger.get(PhoenixClient.class);
+
     public static final String DEFAULT_SCHEM = "DEFAULT";
 
     @Inject
@@ -138,6 +143,20 @@ public class PhoenixClient
         return new SchemaTableName(
                 extractSchem(resultSet),
                 resultSet.getString("TABLE_NAME").toLowerCase(ENGLISH));
+    }
+
+    @Override
+    public String buildSql(JdbcSplit split, List<JdbcColumnHandle> columnHandles)
+    {
+        String sql = new PhoenixQueryBuilder(identifierQuote).buildSql(
+                split.getCatalogName(),
+                split.getSchemaName(),
+                split.getTableName(),
+                columnHandles,
+                split.getTupleDomain());
+
+        log.info("Generated Phoenix query: %s", sql);
+        return sql;
     }
 
     protected String extractSchem(ResultSet resultSet) throws SQLException
