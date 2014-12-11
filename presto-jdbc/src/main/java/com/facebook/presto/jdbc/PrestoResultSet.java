@@ -561,6 +561,9 @@ public class PrestoResultSet
                         return "{}";
                     }
                 }
+                else if (columnInfo.getColumnTypeName().toLowerCase().startsWith("row<")) {
+                    return column(columnIndex).toString();
+                }
         }
         return column(columnIndex);
     }
