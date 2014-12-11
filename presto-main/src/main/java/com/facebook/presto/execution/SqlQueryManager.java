@@ -223,9 +223,15 @@ public class SqlQueryManager
             if (cause instanceof NoViableAltException) {
                 switch (((NoViableAltException) cause).token.getType()) {
                     case StatementParser.SHOW:
-                        e = new ParsingException(String.format("Boss, wrong `SHOW` statement.\n" +
-                                "Please check the SQL Manual: http://prestodb.io/docs/current/sql.html\n" +
-                                "(debug: %s)", e.getErrorMessage()), cause);
+                        e = new ParsingException(String.format("Wrong `SHOW` statement. Try one of the followings instead:\n" +
+                                "SHOW CATALOGS\n" +
+                                "SHOW COLUMNS FROM table\n" +
+                                "SHOW FUNCTIONS\n" +
+                                "SHOW PARTITIONS FROM table [ WHERE ... ] [ ORDER BY ... ] [ LIMIT ... ]\n" +
+                                "SHOW SCHEMAS [ FROM catalog ]\n" +
+                                "SHOW TABLES [ FROM schema ] [ LIKE pattern ]\n" +
+                                "\nCheck Presto SQL Manual for more information: http://prestodb.io/docs/current/sql.html\n" +
+                                "(DEBUG: %s)", e.getErrorMessage()), cause);
                         break;
                     default:
                 }
