@@ -105,16 +105,13 @@ import static com.facebook.presto.hive.HiveColumnHandle.SAMPLE_WEIGHT_COLUMN_NAM
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_PARTITION_SCHEMA_MISMATCH;
 import static com.facebook.presto.hive.HivePartition.UNPARTITIONED_ID;
 import static com.facebook.presto.hive.HiveSessionProperties.getHiveStorageFormat;
-import static com.facebook.presto.hive.HiveType.columnTypeToHiveType;
 import static com.facebook.presto.hive.HiveType.getHiveType;
 import static com.facebook.presto.hive.HiveType.getSupportedHiveType;
-import static com.facebook.presto.hive.HiveType.hiveTypeNameGetter;
 import static com.facebook.presto.hive.HiveUtil.PRESTO_VIEW_FLAG;
 import static com.facebook.presto.hive.HiveUtil.decodeViewData;
 import static com.facebook.presto.hive.HiveUtil.encodeViewData;
 import static com.facebook.presto.hive.HiveUtil.getTableStructFields;
 import static com.facebook.presto.hive.HiveUtil.parsePartitionValue;
-import static com.facebook.presto.hive.HiveUtil.partitionIdGetter;
 import static com.facebook.presto.hive.UnpartitionedPartition.UNPARTITIONED_PARTITION;
 import static com.facebook.presto.hive.util.Types.checkType;
 import static com.facebook.presto.spi.StandardErrorCode.PERMISSION_DENIED;
@@ -764,8 +761,8 @@ public class HiveClient
 
         // create the table in the metastore
         List<String> types = FluentIterable.from(handle.getColumnTypes())
-                .transform(columnTypeToHiveType())
-                .transform(hiveTypeNameGetter())
+                .transform(HiveType::toHiveType)
+                .transform(HiveType::getHiveTypeName)
                 .toList();
 
         boolean sampled = false;
@@ -1168,14 +1165,7 @@ public class HiveClient
         HiveTableHandle hiveTableHandle = checkType(tableHandle, HiveTableHandle.class, "tableHandle");
 
         checkNotNull(connectorPartitions, "connectorPartitions is null");
-        List<HivePartition> partitions = Lists.transform(connectorPartitions, new Function<ConnectorPartition, HivePartition>()
-        {
-            @Override
-            public HivePartition apply(ConnectorPartition partition)
-            {
-                return checkType(partition, HivePartition.class, "partition");
-            }
-        });
+        List<HivePartition> partitions = Lists.transform(connectorPartitions, partition -> checkType(partition, HivePartition.class, "partition"));
 
         HivePartition partition = Iterables.getFirst(partitions, null);
         if (partition == null) {
@@ -1185,7 +1175,7 @@ public class HiveClient
         Optional<HiveBucket> bucket = partition.getBucket();
 
         // sort partitions
-        partitions = Ordering.natural().onResultOf(partitionIdGetter()).reverse().sortedCopy(partitions);
+        partitions = Ordering.natural().onResultOf(ConnectorPartition::getPartitionId).reverse().sortedCopy(partitions);
 
         Table table;
         Iterable<HivePartitionMetadata> hivePartitions;
@@ -1242,7 +1232,7 @@ public class HiveClient
                         Map<String, Partition> partitions = metastore.getPartitionsByNames(
                                 tableName.getSchemaName(),
                                 tableName.getTableName(),
-                                Lists.transform(partitionBatch, partitionIdGetter()));
+                                Lists.transform(partitionBatch, ConnectorPartition::getPartitionId));
                         checkState(partitionBatch.size() == partitions.size(), "expected %s partitions but found %s", partitionBatch.size(), partitions.size());
 
                         ImmutableList.Builder<HivePartitionMetadata> results = ImmutableList.builder();
@@ -1400,20 +1390,13 @@ public class HiveClient
         }
         final Map<String, String> columnComment = builder.build();
 
-        return new Function<HiveColumnHandle, ColumnMetadata>()
-        {
-            @Override
-            public ColumnMetadata apply(HiveColumnHandle input)
-            {
-                return new ColumnMetadata(
-                        input.getName(),
-                        typeManager.getType(input.getTypeSignature()),
-                        input.getOrdinalPosition(),
-                        input.isPartitionKey(),
-                        columnComment.get(input.getName()),
-                        false);
-            }
-        };
+        return input -> new ColumnMetadata(
+                input.getName(),
+                typeManager.getType(input.getTypeSignature()),
+                input.getOrdinalPosition(),
+                input.isPartitionKey(),
+                columnComment.get(input.getName()),
+                false);
     }
 
     /**

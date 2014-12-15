@@ -66,9 +66,6 @@ import static com.facebook.presto.SystemSessionProperties.isBigQueryEnabled;
 import static com.facebook.presto.sql.planner.plan.AggregationNode.Step.FINAL;
 import static com.facebook.presto.sql.planner.plan.AggregationNode.Step.PARTIAL;
 import static com.facebook.presto.sql.planner.plan.AggregationNode.Step.SINGLE;
-import static com.facebook.presto.sql.planner.plan.IndexJoinNode.EquiJoinClause.probeGetter;
-import static com.facebook.presto.sql.planner.plan.JoinNode.EquiJoinClause.leftGetter;
-import static com.facebook.presto.sql.planner.plan.JoinNode.EquiJoinClause.rightGetter;
 import static com.facebook.presto.sql.planner.plan.TableWriterNode.CreateHandle;
 import static com.facebook.presto.sql.planner.plan.TableWriterNode.CreateName;
 import static com.facebook.presto.sql.planner.plan.TableWriterNode.InsertHandle;
@@ -273,7 +270,7 @@ public class DistributedLogicalPlanner
                 }
             }
 
-            current.setRoot(new WindowNode(node.getId(), current.getRoot(), node.getPartitionBy(), node.getOrderBy(), node.getOrderings(), node.getWindowFunctions(), node.getSignatures(), node.getHashSymbol()));
+            current.setRoot(new WindowNode(node.getId(), current.getRoot(), node.getPartitionBy(), node.getOrderBy(), node.getOrderings(), node.getFrame(), node.getWindowFunctions(), node.getSignatures(), node.getHashSymbol()));
 
             return current;
         }
@@ -535,8 +532,8 @@ public class DistributedLogicalPlanner
             SubPlanBuilder right = node.getRight().accept(this, context);
 
             if (left.isDistributed() || right.isDistributed()) {
-                List<Symbol> leftSymbols = Lists.transform(node.getCriteria(), leftGetter());
-                List<Symbol> rightSymbols = Lists.transform(node.getCriteria(), rightGetter());
+                List<Symbol> leftSymbols = Lists.transform(node.getCriteria(), JoinNode.EquiJoinClause::getLeft);
+                List<Symbol> rightSymbols = Lists.transform(node.getCriteria(), JoinNode.EquiJoinClause::getRight);
 
                 switch (node.getType()) {
                     case INNER:
@@ -633,7 +630,7 @@ public class DistributedLogicalPlanner
                 PlanNode sink = new SinkNode(idAllocator.getNextId(), current.getRoot(), current.getRoot().getOutputSymbols());
 
                 current.setRoot(sink)
-                        .setHashOutputPartitioning(Lists.transform(node.getCriteria(), probeGetter()), node.getProbeHashSymbol().transform(channelGetter(current.getRoot())));
+                        .setHashOutputPartitioning(Lists.transform(node.getCriteria(), IndexJoinNode.EquiJoinClause::getProbe), node.getProbeHashSymbol().transform(channelGetter(current.getRoot())));
 
                 PlanNode exchange = new ExchangeNode(idAllocator.getNextId(), current.getId(), sink.getOutputSymbols());
                 IndexJoinNode indexJoinNode = new IndexJoinNode(node.getId(), node.getType(), exchange, node.getIndexSource(), node.getCriteria(), node.getProbeHashSymbol(), node.getIndexHashSymbol());
@@ -713,14 +710,9 @@ public class DistributedLogicalPlanner
 
     private static Function<Symbol, Integer> channelGetter(final PlanNode node)
     {
-        return new Function<Symbol, Integer>()
-        {
-            @Override
-            public Integer apply(Symbol input)
-            {
-                checkArgument(node.getOutputSymbols().contains(input), "node does not contain symbol");
-                return node.getOutputSymbols().indexOf(input);
-            }
+        return input -> {
+            checkArgument(node.getOutputSymbols().contains(input), "node does not contain symbol");
+            return node.getOutputSymbols().indexOf(input);
         };
     }
 }

@@ -11,37 +11,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.sql.analyzer;
+package com.facebook.presto.util;
 
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
 
 public final class Optionals
 {
     private Optionals() {}
 
-    public static Predicate<Optional<?>> isPresentPredicate()
+    @Deprecated
+    public static <T> Optional<T> guavaOptional(java.util.Optional<T> optional)
     {
-        return new Predicate<Optional<?>>()
-        {
-            @Override
-            public boolean apply(Optional<?> input)
-            {
-                return input.isPresent();
-            }
-        };
+        return Optional.fromNullable(optional.orElse(null));
     }
 
-    public static <T> Function<Optional<T>, T> optionalGetter()
+    @Deprecated
+    public static <T> java.util.Optional<T> jdkOptional(Optional<T> optional)
     {
-        return new Function<Optional<T>, T>()
-        {
-            @Override
-            public T apply(Optional<T> input)
-            {
-                return input.get();
-            }
-        };
+        return java.util.Optional.ofNullable(optional.orNull());
     }
 }

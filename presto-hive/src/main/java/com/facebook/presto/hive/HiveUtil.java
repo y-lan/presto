@@ -13,13 +13,11 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.ConnectorPartition;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SerializableNativeValue;
 import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
-import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -52,15 +50,11 @@ import org.joda.time.format.DateTimeParser;
 import org.joda.time.format.DateTimePrinter;
 import org.joda.time.format.ISODateTimeFormat;
 
-import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.Callable;
 
-import static com.facebook.presto.hive.HiveColumnHandle.hiveColumnIndexGetter;
-import static com.facebook.presto.hive.HiveColumnHandle.isPartitionKeyPredicate;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_BAD_DATA;
 import static com.facebook.presto.hive.HivePartitionKey.HIVE_DEFAULT_DYNAMIC_PARTITION;
@@ -123,8 +117,8 @@ public final class HiveUtil
     public static RecordReader<?, ?> createRecordReader(String clientId, Configuration configuration, Path path, long start, long length, Properties schema, List<HiveColumnHandle> columns, TypeManager typeManager)
     {
         // determine which hive columns we will read
-        List<HiveColumnHandle> readColumns = ImmutableList.copyOf(filter(columns, not(isPartitionKeyPredicate())));
-        List<Integer> readHiveColumnIndexes = ImmutableList.copyOf(transform(readColumns, hiveColumnIndexGetter()));
+        List<HiveColumnHandle> readColumns = ImmutableList.copyOf(filter(columns, not(HiveColumnHandle::isPartitionKey)));
+        List<Integer> readHiveColumnIndexes = ImmutableList.copyOf(transform(readColumns, HiveColumnHandle::getHiveColumnIndex));
 
         // Tell hive the columns we would like to read, this lets hive optimize reading column oriented files
         setReadColumns(configuration, readHiveColumnIndexes);
@@ -141,15 +135,9 @@ public final class HiveUtil
         }
 
         try {
-            return retry().stopOnIllegalExceptions().run("createRecordReader", new Callable<RecordReader<?, ?>>()
-            {
-                @Override
-                public RecordReader<?, ?> call()
-                        throws IOException
-                {
-                    return inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
-                }
-            });
+            return retry()
+                    .stopOnIllegalExceptions()
+                    .run("createRecordReader", () -> inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL));
         }
         catch (Exception e) {
             throw new PrestoException(HIVE_CANNOT_OPEN_SPLIT, format("Error opening Hive split %s (offset=%s, length=%s) using %s: %s",
@@ -206,18 +194,6 @@ public final class HiveUtil
         String name = schema.getProperty(FILE_INPUT_FORMAT);
         checkArgument(name != null, "missing property: %s", FILE_INPUT_FORMAT);
         return name;
-    }
-
-    public static Function<ConnectorPartition, String> partitionIdGetter()
-    {
-        return new Function<ConnectorPartition, String>()
-        {
-            @Override
-            public String apply(ConnectorPartition input)
-            {
-                return input.getPartitionId();
-            }
-        };
     }
 
     public static long parseHiveTimestamp(String value, DateTimeZone timeZone)

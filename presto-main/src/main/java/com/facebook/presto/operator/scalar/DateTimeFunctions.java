@@ -20,7 +20,6 @@ import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.type.SqlType;
 import com.facebook.presto.util.DateTimeZoneIndex;
 import com.facebook.presto.util.ThreadLocalCache;
-import com.google.common.base.Charsets;
 import com.google.common.primitives.Ints;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -44,6 +43,7 @@ import static com.facebook.presto.type.DateTimeOperators.modulo24Hour;
 import static com.facebook.presto.util.DateTimeZoneIndex.extractZoneOffsetMinutes;
 import static com.facebook.presto.util.DateTimeZoneIndex.getChronology;
 import static com.facebook.presto.util.DateTimeZoneIndex.unpackChronology;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Locale.ENGLISH;
 
 public final class DateTimeFunctions
@@ -113,7 +113,7 @@ public final class DateTimeFunctions
     @SqlType(StandardTypes.VARCHAR)
     public static Slice currentTimeZone(ConnectorSession session)
     {
-        return Slices.copiedBuffer(session.getTimeZoneKey().getId(), Charsets.UTF_8);
+        return Slices.copiedBuffer(session.getTimeZoneKey().getId(), UTF_8);
     }
 
     @Description("current timestamp with time zone")
@@ -402,7 +402,7 @@ public final class DateTimeFunctions
 
     private static DateTimeField getDateField(ISOChronology chronology, Slice unit)
     {
-        String unitString = unit.toString(Charsets.UTF_8).toLowerCase(ENGLISH);
+        String unitString = unit.toString(UTF_8).toLowerCase(ENGLISH);
         switch (unitString) {
             case "day":
                 return chronology.dayOfMonth();
@@ -421,7 +421,7 @@ public final class DateTimeFunctions
 
     private static DateTimeField getTimeField(ISOChronology chronology, Slice unit)
     {
-        String unitString = unit.toString(Charsets.UTF_8).toLowerCase(ENGLISH);
+        String unitString = unit.toString(UTF_8).toLowerCase(ENGLISH);
         switch (unitString) {
             case "second":
                 return chronology.secondOfMinute();
@@ -436,7 +436,7 @@ public final class DateTimeFunctions
 
     private static DateTimeField getTimestampField(ISOChronology chronology, Slice unit)
     {
-        String unitString = unit.toString(Charsets.UTF_8).toLowerCase(ENGLISH);
+        String unitString = unit.toString(UTF_8).toLowerCase(ENGLISH);
         switch (unitString) {
             case "second":
                 return chronology.secondOfMinute();
@@ -464,13 +464,13 @@ public final class DateTimeFunctions
     @SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE)
     public static long parseDatetime(ConnectorSession session, @SqlType(StandardTypes.VARCHAR) Slice datetime, @SqlType(StandardTypes.VARCHAR) Slice formatString)
     {
-        String pattern = formatString.toString(Charsets.UTF_8);
+        String pattern = formatString.toString(UTF_8);
         DateTimeFormatter formatter = DateTimeFormat.forPattern(pattern)
                 .withChronology(getChronology(session.getTimeZoneKey()))
                 .withOffsetParsed()
                 .withLocale(session.getLocale());
 
-        String datetimeString = datetime.toString(Charsets.UTF_8);
+        String datetimeString = datetime.toString(UTF_8);
         return DateTimeZoneIndex.packDateTimeWithZone(parseDateTimeHelper(formatter, datetimeString));
     }
 
@@ -505,13 +505,13 @@ public final class DateTimeFunctions
 
     private static Slice formatDatetime(ISOChronology chronology, Locale locale, long timestamp, Slice formatString)
     {
-        String pattern = formatString.toString(Charsets.UTF_8);
+        String pattern = formatString.toString(UTF_8);
         DateTimeFormatter formatter = DateTimeFormat.forPattern(pattern)
                 .withChronology(chronology)
                 .withLocale(locale);
 
         String datetimeString = formatter.print(timestamp);
-        return Slices.wrappedBuffer(datetimeString.getBytes(Charsets.UTF_8));
+        return Slices.wrappedBuffer(datetimeString.getBytes(UTF_8));
     }
 
     @ScalarFunction
@@ -537,7 +537,7 @@ public final class DateTimeFunctions
                 .withChronology(chronology)
                 .withLocale(locale);
 
-        return Slices.copiedBuffer(formatter.print(timestamp), Charsets.UTF_8);
+        return Slices.copiedBuffer(formatter.print(timestamp), UTF_8);
     }
 
     @ScalarFunction
@@ -562,7 +562,7 @@ public final class DateTimeFunctions
                 .withLocale(session.getLocale());
 
         try {
-            return formatter.parseMillis(dateTime.toString(Charsets.UTF_8));
+            return formatter.parseMillis(dateTime.toString(UTF_8));
         }
         catch (IllegalArgumentException e) {
             throw new PrestoException(INVALID_FUNCTION_ARGUMENT, e);
@@ -901,60 +901,12 @@ public final class DateTimeFunctions
         return extractZoneOffsetMinutes(timestampWithTimeZone) / 60;
     }
 
-    @Description("get the largest of the given values")
-    @ScalarFunction("greatest")
-    @SqlType(StandardTypes.TIMESTAMP)
-    public static long greatestTimestamp(@SqlType(StandardTypes.TIMESTAMP) long value1, @SqlType(StandardTypes.TIMESTAMP) long value2)
-    {
-        return value1 > value2 ? value1 : value2;
-    }
-
-    @Description("get the smallest of the given values")
-    @ScalarFunction("least")
-    @SqlType(StandardTypes.TIMESTAMP)
-    public static long leastTimestamp(@SqlType(StandardTypes.TIMESTAMP) long value1, @SqlType(StandardTypes.TIMESTAMP) long value2)
-    {
-        return value1 < value2 ? value1 : value2;
-    }
-
-    @Description("get the largest of the given values")
-    @ScalarFunction("greatest")
-    @SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE)
-    public static long greatestTimestampWithTimeZone(@SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE) long value1, @SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE) long value2)
-    {
-        return unpackMillisUtc(value1) > unpackMillisUtc(value2) ? value1 : value2;
-    }
-
-    @Description("get the smallest of the given values")
-    @ScalarFunction("least")
-    @SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE)
-    public static long leastTimestampWithTimeZone(@SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE) long value1, @SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE) long value2)
-    {
-        return unpackMillisUtc(value1) < unpackMillisUtc(value2) ? value1 : value2;
-    }
-
-    @Description("get the largest of the given values")
-    @ScalarFunction("greatest")
-    @SqlType(StandardTypes.DATE)
-    public static long greatestDate(@SqlType(StandardTypes.DATE) long value1, @SqlType(StandardTypes.DATE) long value2)
-    {
-        return value1 > value2 ? value1 : value2;
-    }
-
-    @Description("get the smallest of the given values")
-    @ScalarFunction("least")
-    @SqlType(StandardTypes.DATE)
-    public static long leastDate(@SqlType(StandardTypes.DATE) long value1, @SqlType(StandardTypes.DATE) long value2)
-    {
-        return value1 < value2 ? value1 : value2;
-    }
-
     @SuppressWarnings("fallthrough")
     public static DateTimeFormatter createDateTimeFormatter(Slice format)
     {
         DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder();
 
-        String formatString = format.toString(Charsets.UTF_8);
+        String formatString = format.toString(UTF_8);
         boolean escaped = false;
         for (int i = 0; i < format.length(); i++) {
             char character = formatString.charAt(i);

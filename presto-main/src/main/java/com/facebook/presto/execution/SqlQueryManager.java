@@ -25,8 +25,6 @@ import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.util.AsyncSemaphore;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicates;
-import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.concurrent.SetThreadName;
@@ -40,7 +38,6 @@ import org.weakref.jmx.Flatten;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
 
-import javax.annotation.Nullable;
 import javax.annotation.PreDestroy;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.inject.Inject;
@@ -49,6 +46,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -63,9 +61,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.facebook.presto.SystemSessionProperties.isBigQueryEnabled;
 import static com.facebook.presto.spi.StandardErrorCode.QUERY_QUEUE_FULL;
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.collect.Iterables.filter;
-import static com.google.common.collect.Iterables.transform;
 import static io.airlift.concurrent.Threads.threadsNamed;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 
@@ -161,19 +158,17 @@ public class SqlQueryManager
     @Override
     public List<QueryInfo> getAllQueryInfo()
     {
-        return ImmutableList.copyOf(filter(transform(queries.values(), new Function<QueryExecution, QueryInfo>()
-        {
-            @Override
-            public QueryInfo apply(QueryExecution queryExecution)
-            {
-                try {
-                    return queryExecution.getQueryInfo();
-                }
-                catch (RuntimeException ignored) {
-                    return null;
-                }
-            }
-        }), Predicates.notNull()));
+        return queries.values().stream()
+                .map(queryExecution -> {
+                    try {
+                        return queryExecution.getQueryInfo();
+                    }
+                    catch (RuntimeException ignored) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(toImmutableList());
     }
 
     @Override
@@ -400,19 +395,6 @@ public class SqlQueryManager
         expirationQueue.add(execution);
 
         return execution.getQueryInfo();
-    }
-
-    private static Function<QueryExecution, DateTime> endTimeGetter()
-    {
-        return new Function<QueryExecution, DateTime>()
-        {
-            @Nullable
-            @Override
-            public DateTime apply(QueryExecution input)
-            {
-                return input.getQueryInfo().getQueryStats().getEndTime();
-            }
-        };
     }
 
     private static class QueryStarter

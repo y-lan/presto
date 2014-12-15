@@ -36,7 +36,6 @@ import com.amazonaws.services.s3.transfer.Transfer;
 import com.amazonaws.services.s3.transfer.TransferManager;
 import com.amazonaws.services.s3.transfer.TransferManagerConfiguration;
 import com.amazonaws.services.s3.transfer.Upload;
-import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.AbstractSequentialIterator;
 import com.google.common.collect.Iterators;
@@ -71,7 +70,6 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.hive.RetryDriver.retry;
@@ -120,6 +118,8 @@ public class PrestoS3FileSystem
     {
         checkNotNull(uri, "uri is null");
         checkNotNull(conf, "conf is null");
+        super.initialize(uri, conf);
+        setConf(conf);
 
         this.uri = URI.create(uri.getScheme() + "://" + uri.getAuthority());
         this.workingDirectory = new Path("/").makeQualified(this.uri, new Path("/"));
@@ -326,21 +326,14 @@ public class PrestoS3FileSystem
             }
         };
 
-        return Iterators.concat(Iterators.transform(listings, statusFromListing()));
+        return Iterators.concat(Iterators.transform(listings, this::statusFromListing));
     }
 
-    private Function<ObjectListing, Iterator<LocatedFileStatus>> statusFromListing()
+    private Iterator<LocatedFileStatus> statusFromListing(ObjectListing listing)
     {
-        return new Function<ObjectListing, Iterator<LocatedFileStatus>>()
-        {
-            @Override
-            public Iterator<LocatedFileStatus> apply(ObjectListing listing)
-            {
-                return Iterators.concat(
-                        statusFromPrefixes(listing.getCommonPrefixes()),
-                        statusFromObjects(listing.getObjectSummaries()));
-            }
-        };
+        return Iterators.concat(
+                statusFromPrefixes(listing.getCommonPrefixes()),
+                statusFromObjects(listing.getObjectSummaries()));
     }
 
     private Iterator<LocatedFileStatus> statusFromPrefixes(List<String> prefixes)
@@ -380,21 +373,15 @@ public class PrestoS3FileSystem
                     .maxAttempts(maxClientRetries)
                     .exponentialBackoff(new Duration(1, TimeUnit.SECONDS), maxBackoffTime, maxRetryTime, 2.0)
                     .stopOn(InterruptedException.class)
-                    .run("getS3ObjectMetadata", new Callable<ObjectMetadata>()
-                    {
-                        @Override
-                        public ObjectMetadata call()
-                                throws Exception
-                        {
-                            try {
-                                return s3.getObjectMetadata(uri.getHost(), keyFromPath(path));
+                    .run("getS3ObjectMetadata", () -> {
+                        try {
+                            return s3.getObjectMetadata(uri.getHost(), keyFromPath(path));
+                        }
+                        catch (AmazonS3Exception e) {
+                            if (e.getStatusCode() == 404) {
+                                return null;
                             }
-                            catch (AmazonS3Exception e) {
-                                if (e.getStatusCode() == 404) {
-                                    return null;
-                                }
-                                throw Throwables.propagate(e);
-                            }
+                            throw Throwables.propagate(e);
                         }
                     });
         }
@@ -538,20 +525,14 @@ public class PrestoS3FileSystem
                         .maxAttempts(maxClientRetry)
                         .exponentialBackoff(new Duration(1, TimeUnit.SECONDS), maxBackoffTime, maxRetryTime, 2.0)
                         .stopOn(InterruptedException.class)
-                        .run("readStream", new Callable<Integer>()
-                        {
-                            @Override
-                            public Integer call()
-                                    throws Exception
-                            {
-                                openStream();
-                                try {
-                                    return in.read(buffer, offset, length);
-                                }
-                                catch (Exception e) {
-                                    closeStream();
-                                    throw e;
-                                }
+                        .run("readStream", () -> {
+                            openStream();
+                            try {
+                                return in.read(buffer, offset, length);
+                            }
+                            catch (Exception e) {
+                                closeStream();
+                                throw e;
                             }
                         });
 
@@ -585,15 +566,7 @@ public class PrestoS3FileSystem
                         .maxAttempts(maxClientRetry)
                         .exponentialBackoff(new Duration(1, TimeUnit.SECONDS), maxBackoffTime, maxRetryTime, 2.0)
                         .stopOn(InterruptedException.class)
-                        .run("getS3Object", new Callable<S3Object>()
-                        {
-                            @Override
-                            public S3Object call()
-                                    throws Exception
-                            {
-                                return s3.getObject(new GetObjectRequest(host, keyFromPath(path)).withRange(start, Long.MAX_VALUE));
-                            }
-                        });
+                        .run("getS3Object", () -> s3.getObject(new GetObjectRequest(host, keyFromPath(path)).withRange(start, Long.MAX_VALUE)));
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

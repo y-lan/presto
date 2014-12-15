@@ -51,7 +51,6 @@ import com.facebook.presto.operator.scalar.StringFunctions;
 import com.facebook.presto.operator.scalar.UrlFunctions;
 import com.facebook.presto.operator.scalar.VarbinaryFunctions;
 import com.facebook.presto.operator.window.CumulativeDistributionFunction;
-import com.facebook.presto.operator.window.NTileFunction;
 import com.facebook.presto.operator.window.DenseRankFunction;
 import com.facebook.presto.operator.window.FirstValueFunction.BigintFirstValueFunction;
 import com.facebook.presto.operator.window.FirstValueFunction.BooleanFirstValueFunction;
@@ -69,6 +68,7 @@ import com.facebook.presto.operator.window.LeadFunction.BigintLeadFunction;
 import com.facebook.presto.operator.window.LeadFunction.BooleanLeadFunction;
 import com.facebook.presto.operator.window.LeadFunction.DoubleLeadFunction;
 import com.facebook.presto.operator.window.LeadFunction.VarcharLeadFunction;
+import com.facebook.presto.operator.window.NTileFunction;
 import com.facebook.presto.operator.window.NthValueFunction.BigintNthValueFunction;
 import com.facebook.presto.operator.window.NthValueFunction.BooleanNthValueFunction;
 import com.facebook.presto.operator.window.NthValueFunction.DoubleNthValueFunction;
@@ -99,12 +99,9 @@ import com.facebook.presto.type.TimestampOperators;
 import com.facebook.presto.type.TimestampWithTimeZoneOperators;
 import com.facebook.presto.type.VarbinaryOperators;
 import com.facebook.presto.type.VarcharOperators;
-import com.facebook.presto.util.IterableTransformer;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
@@ -127,26 +124,37 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static com.facebook.presto.metadata.ParametricFunctionUtils.isAggregationPredicate;
-import static com.facebook.presto.metadata.ParametricFunctionUtils.isHiddenPredicate;
+import static com.facebook.presto.operator.aggregation.ArbitraryAggregation.ARBITRARY_AGGREGATION;
 import static com.facebook.presto.operator.aggregation.CountColumn.COUNT_COLUMN;
 import static com.facebook.presto.operator.aggregation.MaxBy.MAX_BY;
 import static com.facebook.presto.operator.aggregation.MinBy.MIN_BY;
 import static com.facebook.presto.operator.scalar.ArrayCardinalityFunction.ARRAY_CARDINALITY;
-import static com.facebook.presto.operator.scalar.ArrayConstructor.ARRAY_CONSTRUCTOR;
 import static com.facebook.presto.operator.scalar.ArrayConcatFunction.ARRAY_CONCAT_FUNCTION;
-import static com.facebook.presto.operator.scalar.ArrayToElementConcatFunction.ARRAY_TO_ELEMENT_CONCAT_FUNCTION;
-import static com.facebook.presto.operator.scalar.ElementToArrayConcatFunction.ELEMENT_TO_ARRAY_CONCAT_FUNCTION;
+import static com.facebook.presto.operator.scalar.ArrayConstructor.ARRAY_CONSTRUCTOR;
+import static com.facebook.presto.operator.scalar.ArrayEqualOperator.ARRAY_EQUAL;
+import static com.facebook.presto.operator.scalar.ArrayGreaterThanOperator.ARRAY_GREATER_THAN;
+import static com.facebook.presto.operator.scalar.ArrayGreaterThanOrEqualOperator.ARRAY_GREATER_THAN_OR_EQUAL;
+import static com.facebook.presto.operator.scalar.ArrayHashCodeOperator.ARRAY_HASH_CODE;
+import static com.facebook.presto.operator.scalar.ArrayLessThanOperator.ARRAY_LESS_THAN;
+import static com.facebook.presto.operator.scalar.ArrayLessThanOrEqualOperator.ARRAY_LESS_THAN_OR_EQUAL;
+import static com.facebook.presto.operator.scalar.ArrayNotEqualOperator.ARRAY_NOT_EQUAL;
 import static com.facebook.presto.operator.scalar.ArraySortFunction.ARRAY_SORT_FUNCTION;
 import static com.facebook.presto.operator.scalar.ArraySubscriptOperator.ARRAY_SUBSCRIPT;
+import static com.facebook.presto.operator.scalar.ArrayToElementConcatFunction.ARRAY_TO_ELEMENT_CONCAT_FUNCTION;
 import static com.facebook.presto.operator.scalar.ArrayToJsonCast.ARRAY_TO_JSON;
+import static com.facebook.presto.operator.scalar.ElementToArrayConcatFunction.ELEMENT_TO_ARRAY_CONCAT_FUNCTION;
+import static com.facebook.presto.operator.scalar.Greatest.GREATEST;
 import static com.facebook.presto.operator.scalar.IdentityCast.IDENTITY_CAST;
+import static com.facebook.presto.operator.scalar.Least.LEAST;
 import static com.facebook.presto.operator.scalar.MapCardinalityFunction.MAP_CARDINALITY;
 import static com.facebook.presto.operator.scalar.MapConstructor.MAP_CONSTRUCTOR;
+import static com.facebook.presto.operator.scalar.MapKeys.MAP_KEYS;
 import static com.facebook.presto.operator.scalar.MapSubscriptOperator.MAP_SUBSCRIPT;
 import static com.facebook.presto.operator.scalar.MapToJsonCast.MAP_TO_JSON;
-import static com.facebook.presto.operator.scalar.MapKeys.MAP_KEYS;
 import static com.facebook.presto.operator.scalar.MapValues.MAP_VALUES;
+import static com.facebook.presto.operator.scalar.RowEqualOperator.ROW_EQUAL;
+import static com.facebook.presto.operator.scalar.RowHashCodeOperator.ROW_HASH_CODE;
+import static com.facebook.presto.operator.scalar.RowNotEqualOperator.ROW_NOT_EQUAL;
 import static com.facebook.presto.operator.scalar.RowToJsonCast.ROW_TO_JSON;
 import static com.facebook.presto.spi.StandardErrorCode.FUNCTION_NOT_FOUND;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
@@ -163,8 +171,9 @@ import static com.facebook.presto.type.JsonPathType.JSON_PATH;
 import static com.facebook.presto.type.LikePatternType.LIKE_PATTERN;
 import static com.facebook.presto.type.RegexpType.REGEXP;
 import static com.facebook.presto.type.TypeUtils.resolveTypes;
-import static com.facebook.presto.type.TypeUtils.typeSignatureGetter;
 import static com.facebook.presto.type.UnknownType.UNKNOWN;
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableSet;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -278,17 +287,13 @@ public class FunctionRegistry
                 .scalar(ArrayFunctions.class)
                 .scalar(CombineHashFunction.class)
                 .scalar(JsonOperators.class)
-                .function(ARRAY_CONSTRUCTOR)
-                .function(ARRAY_SUBSCRIPT)
-                .function(ARRAY_CARDINALITY)
-                .function(ARRAY_CONCAT_FUNCTION)
-                .function(ARRAY_TO_ELEMENT_CONCAT_FUNCTION)
-                .function(ELEMENT_TO_ARRAY_CONCAT_FUNCTION)
-                .function(ARRAY_SORT_FUNCTION)
-                .function(MAP_CONSTRUCTOR)
-                .function(MAP_CARDINALITY)
-                .function(MAP_SUBSCRIPT)
+                .functions(ARRAY_HASH_CODE, ARRAY_EQUAL, ARRAY_NOT_EQUAL, ARRAY_LESS_THAN, ARRAY_LESS_THAN_OR_EQUAL, ARRAY_GREATER_THAN, ARRAY_GREATER_THAN_OR_EQUAL)
+                .functions(ARRAY_CONSTRUCTOR, ARRAY_SUBSCRIPT, ARRAY_CARDINALITY, ARRAY_CONCAT_FUNCTION, ARRAY_TO_ELEMENT_CONCAT_FUNCTION, ELEMENT_TO_ARRAY_CONCAT_FUNCTION, ARRAY_SORT_FUNCTION, ARRAY_TO_JSON)
+                .functions(MAP_CONSTRUCTOR, MAP_CARDINALITY, MAP_SUBSCRIPT, MAP_TO_JSON, MAP_KEYS, MAP_VALUES)
                 .function(IDENTITY_CAST)
+                .function(ARBITRARY_AGGREGATION)
+                .function(LEAST)
+                .function(GREATEST)
                 .function(MAX_BY)
                 .function(MIN_BY)
                 .function(COUNT_COLUMN)
@@ -297,7 +302,8 @@ public class FunctionRegistry
                 .function(MAP_KEYS)
                 .function(MAP_VALUES)
                 .function(ROW_TO_JSON)
-                .function(RowJsonGet.ROW_JSON_GET);
+                .function(RowJsonGet.ROW_JSON_GET)
+                .functions(ROW_HASH_CODE, ROW_TO_JSON, ROW_EQUAL, ROW_NOT_EQUAL);
 
         if (experimentalSyntaxEnabled) {
             builder.aggregate(ApproximateAverageAggregations.class)
@@ -322,24 +328,20 @@ public class FunctionRegistry
     public List<ParametricFunction> list()
     {
         return FluentIterable.from(functions.list())
-                .filter(not(isHiddenPredicate()))
+                .filter(not(ParametricFunction::isHidden))
                 .toList();
     }
 
     public boolean isAggregationFunction(QualifiedName name)
     {
-        return Iterables.any(functions.get(name), isAggregationPredicate());
+        return Iterables.any(functions.get(name), ParametricFunction::isAggregate);
     }
 
     public FunctionInfo resolveFunction(QualifiedName name, List<TypeSignature> parameterTypes, final boolean approximate)
     {
-        List<ParametricFunction> candidates = IterableTransformer.on(functions.get(name)).select(new Predicate<ParametricFunction>() {
-            @Override
-            public boolean apply(ParametricFunction input)
-            {
-                return input.isScalar() || input.isApproximate() == approximate;
-            }
-        }).list();
+        List<ParametricFunction> candidates = functions.get(name).stream()
+                .filter(function -> function.isScalar() || function.isApproximate() == approximate)
+                .collect(toImmutableList());
 
         List<Type> resolvedTypes = resolveTypes(parameterTypes, typeManager);
         // search for exact match
@@ -348,7 +350,7 @@ public class FunctionRegistry
             Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, false, typeManager);
             if (boundTypeParameters != null) {
                 checkArgument(match == null, "Ambiguous call to %s with parameters %s", name, parameterTypes);
-                match = function.specialize(boundTypeParameters, parameterTypes, typeManager);
+                match = function.specialize(boundTypeParameters, parameterTypes, typeManager, this);
             }
         }
 
@@ -361,7 +363,7 @@ public class FunctionRegistry
             Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, true, typeManager);
             if (boundTypeParameters != null) {
                 // TODO: This should also check for ambiguities
-                return function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager);
+                return function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager, this);
             }
         }
 
@@ -417,7 +419,7 @@ public class FunctionRegistry
                     Map<String, Type> boundTypeParameters = function.getSignature().bindTypeParameters(resolvedTypes, false, typeManager);
                     if (boundTypeParameters != null) {
                         checkArgument(match == null, "Ambiguous call to %s with parameters %s", name, parameterTypes);
-                        match = function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager);
+                        match = function.specialize(boundTypeParameters, resolvedTypes.size(), typeManager, this);
                     }
                 }
 
@@ -439,7 +441,7 @@ public class FunctionRegistry
             List<Type> argumentTypes = resolveTypes(signature.getArgumentTypes(), typeManager);
             Map<String, Type> boundTypeParameters = operator.getSignature().bindTypeParameters(returnType, argumentTypes, false, typeManager);
             if (boundTypeParameters != null) {
-                return operator.specialize(boundTypeParameters, signature.getArgumentTypes(), typeManager);
+                return operator.specialize(boundTypeParameters, signature.getArgumentTypes(), typeManager, this);
             }
         }
         return null;
@@ -448,27 +450,20 @@ public class FunctionRegistry
     @VisibleForTesting
     public List<ParametricFunction> listOperators()
     {
-        final Set<String> operatorNames = FluentIterable.from(Arrays.asList(OperatorType.values())).transform(new Function<OperatorType, String>() {
-            @Override
-            public String apply(OperatorType input)
-            {
-                return mangleOperatorName(input);
-            }
-        }).toSet();
-        return FluentIterable.from(functions.functions.values()).filter(new Predicate<ParametricFunction>() {
-            @Override
-            public boolean apply(ParametricFunction input)
-            {
-                return operatorNames.contains(input.getSignature().getName());
-            }
-        }).toList();
+        final Set<String> operatorNames = Arrays.asList(OperatorType.values()).stream()
+                .map(FunctionRegistry::mangleOperatorName)
+                .collect(toImmutableSet());
+
+        return functions.list().stream()
+                .filter(function -> operatorNames.contains(function.getSignature().getName()))
+                .collect(toImmutableList());
     }
 
     public FunctionInfo resolveOperator(OperatorType operatorType, List<? extends Type> argumentTypes)
             throws OperatorNotFoundException
     {
         try {
-            return resolveFunction(QualifiedName.of(mangleOperatorName(operatorType)), Lists.transform(argumentTypes, typeSignatureGetter()), false);
+            return resolveFunction(QualifiedName.of(mangleOperatorName(operatorType)), Lists.transform(argumentTypes, Type::getTypeSignature), false);
         }
         catch (PrestoException e) {
             if (e.getErrorCode().getCode() == FUNCTION_NOT_FOUND.toErrorCode().getCode()) {
@@ -488,7 +483,7 @@ public class FunctionRegistry
     private FunctionInfo getExactOperator(OperatorType operatorType, List<? extends Type> argumentTypes, Type returnType)
             throws OperatorNotFoundException
     {
-        FunctionInfo functionInfo = getExactFunction(Signature.internalOperator(operatorType.name(), returnType.getTypeSignature(), Lists.transform(argumentTypes, typeSignatureGetter())));
+        FunctionInfo functionInfo = getExactFunction(Signature.internalOperator(operatorType.name(), returnType.getTypeSignature(), Lists.transform(argumentTypes, Type::getTypeSignature)));
 
         if (functionInfo == null) {
             throw new OperatorNotFoundException(operatorType, argumentTypes, returnType);
@@ -557,6 +552,20 @@ public class FunctionRegistry
         return false;
     }
 
+    public static Optional<Type> getCommonSuperType(List<? extends Type> types)
+    {
+        checkArgument(!types.isEmpty(), "types is empty");
+        Type superType = UNKNOWN;
+        for (Type type : types) {
+            Optional<Type> commonSuperType = getCommonSuperType(superType, type);
+            if (!commonSuperType.isPresent()) {
+                return Optional.absent();
+            }
+            superType = commonSuperType.get();
+        }
+        return Optional.of(superType);
+    }
+
     public static Optional<Type> getCommonSuperType(Type firstType, Type secondType)
     {
         if (firstType.equals(UNKNOWN)) {
@@ -608,7 +617,7 @@ public class FunctionRegistry
     {
         return new Signature(MAGIC_LITERAL_FUNCTION_PREFIX + type.getTypeSignature(),
                 type.getTypeSignature(),
-                Lists.transform(ImmutableList.of(type(type.getJavaType())), typeSignatureGetter()));
+                Lists.transform(ImmutableList.of(type(type.getJavaType())), Type::getTypeSignature));
     }
 
     public static boolean isSupportedLiteralType(Type type)
@@ -659,19 +668,13 @@ public class FunctionRegistry
         {
             this.functions = ImmutableListMultimap.<QualifiedName, ParametricFunction>builder()
                     .putAll(map.functions)
-                    .putAll(Multimaps.index(functions, new Function<ParametricFunction, QualifiedName>() {
-                        @Override
-                        public QualifiedName apply(ParametricFunction input)
-                        {
-                            return QualifiedName.of(input.getSignature().getName());
-                        }
-                    }))
+                    .putAll(Multimaps.index(functions, function -> QualifiedName.of(function.getSignature().getName())))
                     .build();
 
             // Make sure all functions with the same name are aggregations or none of them are
             for (Map.Entry<QualifiedName, Collection<ParametricFunction>> entry : this.functions.asMap().entrySet()) {
                 Collection<ParametricFunction> values = entry.getValue();
-                checkState(Iterables.all(values, isAggregationPredicate()) || !Iterables.any(values, isAggregationPredicate()),
+                checkState(Iterables.all(values, ParametricFunction::isAggregate) || !Iterables.any(values, ParametricFunction::isAggregate),
                         "'%s' is both an aggregation and a scalar function", entry.getKey());
             }
         }

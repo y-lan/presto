@@ -56,7 +56,6 @@ import com.facebook.presto.testing.MaterializedRow;
 import com.facebook.presto.type.ArrayType;
 import com.facebook.presto.type.MapType;
 import com.facebook.presto.type.TypeRegistry;
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -98,7 +97,6 @@ import static com.facebook.presto.hive.HiveTestUtils.TYPE_MANAGER;
 import static com.facebook.presto.hive.HiveTestUtils.getTypes;
 import static com.facebook.presto.hive.HiveType.HIVE_INT;
 import static com.facebook.presto.hive.HiveType.HIVE_STRING;
-import static com.facebook.presto.hive.HiveUtil.partitionIdGetter;
 import static com.facebook.presto.hive.util.Types.checkType;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
@@ -379,7 +377,7 @@ public abstract class AbstractTestHiveClient
 
     protected void assertExpectedPartitions(List<ConnectorPartition> actualPartitions, Iterable<ConnectorPartition> expectedPartitions)
     {
-        Map<String, ConnectorPartition> actualById = uniqueIndex(actualPartitions, partitionIdGetter());
+        Map<String, ConnectorPartition> actualById = uniqueIndex(actualPartitions, ConnectorPartition::getPartitionId);
         for (ConnectorPartition expected : expectedPartitions) {
             assertInstanceOf(expected, HivePartition.class);
             HivePartition expectedPartition = (HivePartition) expected;
@@ -421,7 +419,7 @@ public abstract class AbstractTestHiveClient
             throws Exception
     {
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(getTableHandle(tablePartitionFormat));
-        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
+        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), ColumnMetadata::getName);
 
         int i = 0;
         assertPrimitiveField(map, i++, "t_string", VARCHAR, false);
@@ -443,7 +441,7 @@ public abstract class AbstractTestHiveClient
     {
         ConnectorTableHandle tableHandle = getTableHandle(tableUnpartitioned);
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
-        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
+        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), ColumnMetadata::getName);
 
         assertPrimitiveField(map, 0, "t_string", VARCHAR, false);
         assertPrimitiveField(map, 1, "t_tinyint", BIGINT, false);
@@ -455,7 +453,7 @@ public abstract class AbstractTestHiveClient
     {
         ConnectorTableHandle tableHandle = getTableHandle(tableOffline);
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
-        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
+        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), ColumnMetadata::getName);
 
         assertPrimitiveField(map, 0, "t_string", VARCHAR, false);
     }
@@ -466,7 +464,7 @@ public abstract class AbstractTestHiveClient
     {
         ConnectorTableHandle tableHandle = getTableHandle(tableOfflinePartition);
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
-        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
+        Map<String, ColumnMetadata> map = uniqueIndex(tableMetadata.getColumns(), ColumnMetadata::getName);
 
         assertPrimitiveField(map, 0, "t_string", VARCHAR, false);
     }
@@ -1195,7 +1193,7 @@ public abstract class AbstractTestHiveClient
         tableMetadata = metadata.getTableMetadata(getTableHandle(temporaryCreateSampledTable));
         assertEquals(tableMetadata.getOwner(), SESSION.getUser());
 
-        Map<String, ColumnMetadata> columnMap = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
+        Map<String, ColumnMetadata> columnMap = uniqueIndex(tableMetadata.getColumns(), ColumnMetadata::getName);
         assertEquals(columnMap.size(), 1);
 
         assertPrimitiveField(columnMap, 0, "sales", BIGINT, false);
@@ -1290,7 +1288,7 @@ public abstract class AbstractTestHiveClient
         tableMetadata = metadata.getTableMetadata(getTableHandle(temporaryCreateTable));
         assertEquals(tableMetadata.getOwner(), session.getUser());
 
-        Map<String, ColumnMetadata> columnMap = uniqueIndex(tableMetadata.getColumns(), columnNameGetter());
+        Map<String, ColumnMetadata> columnMap = uniqueIndex(tableMetadata.getColumns(), ColumnMetadata::getName);
 
         assertPrimitiveField(columnMap, 0, "id", BIGINT, false);
         assertPrimitiveField(columnMap, 1, "t_string", VARCHAR, false);
@@ -1710,17 +1708,5 @@ public abstract class AbstractTestHiveClient
     private static String randomName()
     {
         return UUID.randomUUID().toString().toLowerCase(ENGLISH).replace("-", "");
-    }
-
-    private static Function<ColumnMetadata, String> columnNameGetter()
-    {
-        return new Function<ColumnMetadata, String>()
-        {
-            @Override
-            public String apply(ColumnMetadata input)
-            {
-                return input.getName();
-            }
-        };
     }
 }

@@ -35,7 +35,6 @@ import com.facebook.presto.sql.planner.NoOpSymbolResolver;
 import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
 import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.planner.SymbolAllocator;
-import com.facebook.presto.sql.planner.SymbolResolver;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
@@ -58,7 +57,6 @@ import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.NullLiteral;
 import com.facebook.presto.sql.tree.QualifiedNameReference;
 import com.facebook.presto.util.IterableTransformer;
-import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
@@ -83,9 +81,7 @@ import static com.facebook.presto.sql.ExpressionUtils.combineConjuncts;
 import static com.facebook.presto.sql.ExpressionUtils.expressionOrNullSymbols;
 import static com.facebook.presto.sql.ExpressionUtils.extractConjuncts;
 import static com.facebook.presto.sql.ExpressionUtils.stripNonDeterministicConjuncts;
-import static com.facebook.presto.sql.ExpressionUtils.symbolToQualifiedNameReference;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypes;
-import static com.facebook.presto.sql.planner.DeterminismEvaluator.deterministic;
 import static com.facebook.presto.sql.planner.DeterminismEvaluator.isDeterministic;
 import static com.facebook.presto.sql.planner.EqualityInference.createEqualityInference;
 import static com.facebook.presto.sql.planner.plan.JoinNode.Type.CROSS;
@@ -110,14 +106,12 @@ public class PredicatePushDown
     private final Metadata metadata;
     private final SqlParser sqlParser;
     private final SplitManager splitManager;
-    private final boolean experimentalSyntaxEnabled;
 
-    public PredicatePushDown(Metadata metadata, SqlParser sqlParser, SplitManager splitManager, boolean experimentalSyntaxEnabled)
+    public PredicatePushDown(Metadata metadata, SqlParser sqlParser, SplitManager splitManager)
     {
         this.metadata = checkNotNull(metadata, "metadata is null");
         this.sqlParser = checkNotNull(sqlParser, "sqlParser is null");
         this.splitManager = checkNotNull(splitManager, "splitManager is null");
-        this.experimentalSyntaxEnabled = experimentalSyntaxEnabled;
     }
 
     @Override
@@ -128,7 +122,7 @@ public class PredicatePushDown
         checkNotNull(types, "types is null");
         checkNotNull(idAllocator, "idAllocator is null");
 
-        return PlanRewriter.rewriteWith(new Rewriter(symbolAllocator, idAllocator, metadata, sqlParser, splitManager, session, experimentalSyntaxEnabled), plan, BooleanLiteral.TRUE_LITERAL);
+        return PlanRewriter.rewriteWith(new Rewriter(symbolAllocator, idAllocator, metadata, sqlParser, splitManager, session), plan, BooleanLiteral.TRUE_LITERAL);
     }
 
     private static class Rewriter
@@ -140,7 +134,6 @@ public class PredicatePushDown
         private final SqlParser sqlParser;
         private final SplitManager splitManager;
         private final Session session;
-        private final boolean experimentalSyntaxEnabled;
 
         private Rewriter(
                 SymbolAllocator symbolAllocator,
@@ -148,8 +141,7 @@ public class PredicatePushDown
                 Metadata metadata,
                 SqlParser sqlParser,
                 SplitManager splitManager,
-                Session session,
-                boolean experimentalSyntaxEnabled)
+                Session session)
         {
             this.symbolAllocator = checkNotNull(symbolAllocator, "symbolAllocator is null");
             this.idAllocator = checkNotNull(idAllocator, "idAllocator is null");
@@ -157,7 +149,6 @@ public class PredicatePushDown
             this.sqlParser = checkNotNull(sqlParser, "sqlParser is null");
             this.splitManager = checkNotNull(splitManager, "splitManager is null");
             this.session = checkNotNull(session, "session is null");
-            this.experimentalSyntaxEnabled = experimentalSyntaxEnabled;
         }
 
         @Override
@@ -287,16 +278,16 @@ public class PredicatePushDown
                     // Create identity projections for all existing symbols
                     ImmutableMap.Builder<Symbol, Expression> leftProjections = ImmutableMap.builder();
                     leftProjections.putAll(IterableTransformer.<Symbol>on(node.getLeft().getOutputSymbols())
-                            .toMap(symbolToQualifiedNameReference())
+                            .toMap(Symbol::toQualifiedNameReference)
                             .map());
                     ImmutableMap.Builder<Symbol, Expression> rightProjections = ImmutableMap.builder();
                     rightProjections.putAll(IterableTransformer.<Symbol>on(node.getRight().getOutputSymbols())
-                            .toMap(symbolToQualifiedNameReference())
+                            .toMap(Symbol::toQualifiedNameReference)
                             .map());
 
                     // HACK! we don't support cross joins right now, so put in a simple fake join predicate instead if all of the join clauses got simplified out
                     // TODO: remove this code when cross join support is added
-                    Iterable<Expression> simplifiedJoinConjuncts = transform(extractConjuncts(newJoinPredicate), simplifyExpressions());
+                    Iterable<Expression> simplifiedJoinConjuncts = transform(extractConjuncts(newJoinPredicate), this::simplifyExpression);
                     simplifiedJoinConjuncts = filter(simplifiedJoinConjuncts, not(Predicates.<Expression>equalTo(BooleanLiteral.TRUE_LITERAL)));
                     if (Iterables.isEmpty(simplifiedJoinConjuncts)) {
                         simplifiedJoinConjuncts = ImmutableList.<Expression>of(new ComparisonExpression(ComparisonExpression.Type.EQUAL, new LongLiteral("0"), new LongLiteral("0")));
@@ -343,7 +334,7 @@ public class PredicatePushDown
             ImmutableList.Builder<Expression> postJoinConjuncts = ImmutableList.builder();
 
             // Strip out non-deterministic conjuncts
-            postJoinConjuncts.addAll(filter(extractConjuncts(inheritedPredicate), not(deterministic())));
+            postJoinConjuncts.addAll(filter(extractConjuncts(inheritedPredicate), not(DeterminismEvaluator::isDeterministic)));
             inheritedPredicate = stripNonDeterministicConjuncts(inheritedPredicate);
 
             outerEffectivePredicate = stripNonDeterministicConjuncts(outerEffectivePredicate);
@@ -436,10 +427,10 @@ public class PredicatePushDown
             ImmutableList.Builder<Expression> joinConjuncts = ImmutableList.builder();
 
             // Strip out non-deterministic conjuncts
-            joinConjuncts.addAll(filter(extractConjuncts(inheritedPredicate), not(deterministic())));
+            joinConjuncts.addAll(filter(extractConjuncts(inheritedPredicate), not(DeterminismEvaluator::isDeterministic)));
             inheritedPredicate = stripNonDeterministicConjuncts(inheritedPredicate);
 
-            joinConjuncts.addAll(filter(extractConjuncts(joinPredicate), not(deterministic())));
+            joinConjuncts.addAll(filter(extractConjuncts(joinPredicate), not(DeterminismEvaluator::isDeterministic)));
             joinPredicate = stripNonDeterministicConjuncts(joinPredicate);
 
             leftEffectivePredicate = stripNonDeterministicConjuncts(leftEffectivePredicate);
@@ -606,18 +597,11 @@ public class PredicatePushDown
         }
 
         // Temporary implementation for joins because the SimplifyExpressions optimizers can not run properly on join clauses
-        private Function<Expression, Expression> simplifyExpressions()
+        private Expression simplifyExpression(Expression expression)
         {
-            return new Function<Expression, Expression>()
-            {
-                @Override
-                public Expression apply(Expression expression)
-                {
-                    IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(session, metadata, sqlParser, symbolAllocator.getTypes(), expression);
-                    ExpressionInterpreter optimizer = ExpressionInterpreter.expressionOptimizer(expression, metadata, session, expressionTypes);
-                    return LiteralInterpreter.toExpression(optimizer.optimize(NoOpSymbolResolver.INSTANCE), expressionTypes.get(expression));
-                }
-            };
+            IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(session, metadata, sqlParser, symbolAllocator.getTypes(), expression);
+            ExpressionInterpreter optimizer = ExpressionInterpreter.expressionOptimizer(expression, metadata, session, expressionTypes);
+            return LiteralInterpreter.toExpression(optimizer.optimize(NoOpSymbolResolver.INSTANCE), expressionTypes.get(expression));
         }
 
         /**
@@ -627,35 +611,23 @@ public class PredicatePushDown
         {
             IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(session, metadata, sqlParser, symbolAllocator.getTypes(), expression);
             return ExpressionInterpreter.expressionOptimizer(expression, metadata, session, expressionTypes)
-                    .optimize(new SymbolResolver()
-                    {
-                        @Override
-                        public Object getValue(Symbol symbol)
-                        {
-                            return nullSymbols.contains(symbol) ? null : new QualifiedNameReference(symbol.toQualifiedName());
-                        }
-                    });
+                    .optimize(symbol -> nullSymbols.contains(symbol) ? null : new QualifiedNameReference(symbol.toQualifiedName()));
         }
 
         private static Predicate<Expression> joinEqualityExpression(final Collection<Symbol> leftSymbols)
         {
-            return new Predicate<Expression>()
-            {
-                @Override
-                public boolean apply(Expression expression)
-                {
-                    // At this point in time, our join predicates need to be deterministic
-                    if (isDeterministic(expression) && expression instanceof ComparisonExpression) {
-                        ComparisonExpression comparison = (ComparisonExpression) expression;
-                        if (comparison.getType() == ComparisonExpression.Type.EQUAL) {
-                            Set<Symbol> symbols1 = DependencyExtractor.extractUnique(comparison.getLeft());
-                            Set<Symbol> symbols2 = DependencyExtractor.extractUnique(comparison.getRight());
-                            return (Iterables.all(symbols1, in(leftSymbols)) && Iterables.all(symbols2, not(in(leftSymbols)))) ||
-                                    (Iterables.all(symbols2, in(leftSymbols)) && Iterables.all(symbols1, not(in(leftSymbols))));
-                        }
+            return expression -> {
+                // At this point in time, our join predicates need to be deterministic
+                if (isDeterministic(expression) && expression instanceof ComparisonExpression) {
+                    ComparisonExpression comparison = (ComparisonExpression) expression;
+                    if (comparison.getType() == ComparisonExpression.Type.EQUAL) {
+                        Set<Symbol> symbols1 = DependencyExtractor.extractUnique(comparison.getLeft());
+                        Set<Symbol> symbols2 = DependencyExtractor.extractUnique(comparison.getRight());
+                        return (Iterables.all(symbols1, in(leftSymbols)) && Iterables.all(symbols2, not(in(leftSymbols)))) ||
+                                (Iterables.all(symbols2, in(leftSymbols)) && Iterables.all(symbols1, not(in(leftSymbols))));
                     }
-                    return false;
                 }
+                return false;
             };
         }
 
@@ -726,7 +698,7 @@ public class PredicatePushDown
             List<Expression> postAggregationConjuncts = new ArrayList<>();
 
             // Strip out non-deterministic conjuncts
-            postAggregationConjuncts.addAll(ImmutableList.copyOf(filter(extractConjuncts(inheritedPredicate), not(deterministic()))));
+            postAggregationConjuncts.addAll(ImmutableList.copyOf(filter(extractConjuncts(inheritedPredicate), not(DeterminismEvaluator::isDeterministic))));
             inheritedPredicate = stripNonDeterministicConjuncts(inheritedPredicate);
 
             // Sort non-equality predicates by those that can be pushed down and those that cannot
@@ -776,7 +748,7 @@ public class PredicatePushDown
             List<Expression> postUnnestConjuncts = new ArrayList<>();
 
             // Strip out non-deterministic conjuncts
-            postUnnestConjuncts.addAll(ImmutableList.copyOf(filter(extractConjuncts(inheritedPredicate), not(deterministic()))));
+            postUnnestConjuncts.addAll(ImmutableList.copyOf(filter(extractConjuncts(inheritedPredicate), not(DeterminismEvaluator::isDeterministic))));
             inheritedPredicate = stripNonDeterministicConjuncts(inheritedPredicate);
 
             // Sort non-equality predicates by those that can be pushed down and those that cannot
@@ -867,35 +839,30 @@ public class PredicatePushDown
             final List<Expression> conjuncts = extractConjuncts(predicate);
             final IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(session, metadata, sqlParser, symbolAllocator.getTypes(), predicate);
 
-            return new Predicate<Partition>()
-            {
-                @Override
-                public boolean apply(Partition partition)
-                {
-                    Map<ColumnHandle, Comparable<?>> columnFixedValueAssignments = partition.getTupleDomain().extractFixedValues();
+            return partition -> {
+                Map<ColumnHandle, Comparable<?>> columnFixedValueAssignments = partition.getTupleDomain().extractFixedValues();
 
-                    checkArgument(columnToSymbol.keySet().containsAll(columnFixedValueAssignments.keySet()), "assignments does not contain all required column handles");
+                checkArgument(columnToSymbol.keySet().containsAll(columnFixedValueAssignments.keySet()), "assignments does not contain all required column handles");
 
-                    ImmutableMap.Builder<Symbol, Object> builder = ImmutableMap.builder();
-                    for (Map.Entry<ColumnHandle, Comparable<?>> entry : columnFixedValueAssignments.entrySet()) {
-                        Symbol translated = columnToSymbol.get(entry.getKey());
-                        if (translated != null) {
-                            builder.put(translated, entry.getValue());
-                        }
+                ImmutableMap.Builder<Symbol, Object> builder = ImmutableMap.builder();
+                for (Map.Entry<ColumnHandle, Comparable<?>> entry : columnFixedValueAssignments.entrySet()) {
+                    Symbol translated = columnToSymbol.get(entry.getKey());
+                    if (translated != null) {
+                        builder.put(translated, entry.getValue());
                     }
-
-                    LookupSymbolResolver inputs = new LookupSymbolResolver(builder.build());
-
-                    // If any conjuncts evaluate to FALSE or null, then the whole predicate will never be true and so the partition should be pruned
-                    for (Expression expression : conjuncts) {
-                        ExpressionInterpreter optimizer = ExpressionInterpreter.expressionOptimizer(expression, metadata, session, expressionTypes);
-                        Object optimized = optimizer.optimize(inputs);
-                        if (Boolean.FALSE.equals(optimized) || optimized == null || optimized instanceof NullLiteral) {
-                            return true;
-                        }
-                    }
-                    return false;
                 }
+
+                LookupSymbolResolver inputs = new LookupSymbolResolver(builder.build());
+
+                // If any conjuncts evaluate to FALSE or null, then the whole predicate will never be true and so the partition should be pruned
+                for (Expression expression : conjuncts) {
+                    ExpressionInterpreter optimizer = ExpressionInterpreter.expressionOptimizer(expression, metadata, session, expressionTypes);
+                    Object optimized = optimizer.optimize(inputs);
+                    if (Boolean.FALSE.equals(optimized) || optimized == null || optimized instanceof NullLiteral) {
+                        return true;
+                    }
+                }
+                return false;
             };
         }
     }

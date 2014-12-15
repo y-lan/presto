@@ -17,11 +17,11 @@ import com.facebook.presto.metadata.ColumnHandle;
 import com.facebook.presto.metadata.Partition;
 import com.facebook.presto.metadata.TableHandle;
 import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.sql.planner.DomainUtils;
 import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.tree.Expression;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Function;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
@@ -37,7 +37,6 @@ import java.util.List;
 import java.util.Map;
 
 import static com.facebook.presto.sql.planner.DomainUtils.columnHandleToSymbol;
-import static com.facebook.presto.sql.planner.DomainUtils.simplifyDomainFunction;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -159,7 +158,7 @@ public class TableScanNode
             builder.append("NONE");
         }
         else {
-            builder.append(Maps.transformValues(columnHandleToSymbol(summarizedPartition.getPartitionDomainSummary().getDomains(), assignments), simplifyDomainFunction()));
+            builder.append(Maps.transformValues(columnHandleToSymbol(summarizedPartition.getPartitionDomainSummary().getDomains(), assignments), DomainUtils::simplifyDomain));
         }
         return builder.toString();
     }
@@ -188,19 +187,7 @@ public class TableScanNode
 
         }
 
-        private static Function<Partition, TupleDomain<ColumnHandle>> tupleDomainGetter()
-        {
-            return new Function<Partition, TupleDomain<ColumnHandle>>()
-            {
-                @Override
-                public TupleDomain<ColumnHandle> apply(Partition partition)
-                {
-                    return partition.getTupleDomain();
-                }
-            };
-        }
-
-            private static TupleDomain<ColumnHandle> computePartitionsDomainSummary(Optional<GeneratedPartitions> generatedPartitions)
+        private static TupleDomain<ColumnHandle> computePartitionsDomainSummary(Optional<GeneratedPartitions> generatedPartitions)
         {
             if (!generatedPartitions.isPresent()) {
                 return TupleDomain.all();
@@ -210,7 +197,7 @@ public class TableScanNode
                 return TupleDomain.none();
             }
 
-            List<TupleDomain<ColumnHandle>> domains = FluentIterable.from(generatedPartitions.get().getPartitions()).transform(tupleDomainGetter()).toList();
+            List<TupleDomain<ColumnHandle>> domains = FluentIterable.from(generatedPartitions.get().getPartitions()).transform(Partition::getTupleDomain).toList();
             return TupleDomain.columnWiseUnion(domains);
         }
 

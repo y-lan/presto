@@ -193,15 +193,7 @@ public class SqlTask
         }
 
         ListenableFuture<TaskState> futureTaskState = taskStateMachine.getStateChange(callersCurrentState);
-        return Futures.transform(futureTaskState, new Function<TaskState, TaskInfo>()
-        {
-            @Nullable
-            @Override
-            public TaskInfo apply(@Nullable TaskState state)
-            {
-                return getTaskInfo();
-            }
-        });
+        return Futures.transform(futureTaskState, (TaskState input) -> getTaskInfo());
     }
 
     public TaskInfo updateTask(Session session, PlanFragment fragment, List<TaskSource> sources, OutputBuffers outputBuffers)
@@ -271,19 +263,6 @@ public class SqlTask
     public String toString()
     {
         return taskId.toString();
-    }
-
-    public static Function<SqlTask, TaskInfo> taskInfoGetter()
-    {
-        return new Function<SqlTask, TaskInfo>()
-        {
-            @Nullable
-            @Override
-            public TaskInfo apply(SqlTask sqlTask)
-            {
-                return sqlTask.getTaskInfo();
-            }
-        };
     }
 
     private static final class TaskHolder

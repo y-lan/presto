@@ -65,10 +65,8 @@ import com.facebook.presto.sql.tree.SubscriptExpression;
 import com.facebook.presto.sql.tree.TimeLiteral;
 import com.facebook.presto.sql.tree.TimestampLiteral;
 import com.facebook.presto.sql.tree.WhenClause;
+import com.facebook.presto.sql.tree.WindowFrame;
 import com.facebook.presto.type.RowType;
-import com.facebook.presto.util.IterableTransformer;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
@@ -81,6 +79,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
 
 import static com.facebook.presto.metadata.FunctionRegistry.canCoerce;
@@ -110,6 +109,7 @@ import static com.facebook.presto.type.RowType.RowField;
 import static com.facebook.presto.type.UnknownType.UNKNOWN;
 import static com.facebook.presto.util.DateTimeUtils.timeHasTimeZone;
 import static com.facebook.presto.util.DateTimeUtils.timestampHasTimeZone;
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static com.facebook.presto.util.Types.checkType;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -592,6 +592,24 @@ public class ExpressionAnalyzer
                         throw new SemanticException(TYPE_MISMATCH, node, "%s is not comparable, and therefore cannot be used in window function ORDER BY", type);
                     }
                 }
+
+                if (node.getWindow().get().getFrame().isPresent()) {
+                    WindowFrame frame = node.getWindow().get().getFrame().get();
+
+                    if (frame.getStart().getValue().isPresent()) {
+                        Type type = process(frame.getStart().getValue().get(), context);
+                        if (!type.equals(BIGINT)) {
+                            throw new SemanticException(TYPE_MISMATCH, node, "Window frame start value type must be BIGINT (actual %s)", type);
+                        }
+                    }
+
+                    if (frame.getEnd().isPresent() && frame.getEnd().get().getValue().isPresent()) {
+                        Type type = process(frame.getEnd().get().getValue().get(), context);
+                        if (!type.equals(BIGINT)) {
+                            throw new SemanticException(TYPE_MISMATCH, node, "Window frame end value type must be BIGINT (actual %s)", type);
+                        }
+                    }
+                }
             }
 
             ImmutableList.Builder<TypeSignature> argumentTypes = ImmutableList.builder();
@@ -715,7 +733,7 @@ public class ExpressionAnalyzer
         @Override
         protected Type visitSubqueryExpression(SubqueryExpression node, AnalysisContext context)
         {
-            StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, sqlParser, session, experimentalSyntaxEnabled, Optional.<QueryExplainer>absent());
+            StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, sqlParser, session, experimentalSyntaxEnabled, Optional.empty());
             TupleDescriptor descriptor = analyzer.process(node.getQuery(), context);
 
             // Scalar subqueries should only produce one column
@@ -822,7 +840,7 @@ public class ExpressionAnalyzer
             // determine super type
             Type superType = UNKNOWN;
             for (Expression expression : expressions) {
-                Optional<Type> newSuperType = getCommonSuperType(superType, process(expression, context));
+                com.google.common.base.Optional<Type> newSuperType = getCommonSuperType(superType, process(expression, context));
                 if (!newSuperType.isPresent()) {
                     throw new SemanticException(TYPE_MISMATCH, expression, message, superType);
                 }
@@ -891,18 +909,13 @@ public class ExpressionAnalyzer
             final Map<Symbol, Type> types,
             Iterable<? extends Expression> expressions)
     {
-        List<Field> fields = IterableTransformer.on(DependencyExtractor.extractUnique(expressions))
-                .transform(new Function<Symbol, Field>()
-                {
-                    @Override
-                    public Field apply(Symbol symbol)
-                    {
-                        Type type = types.get(symbol);
-                        checkArgument(type != null, "No type for symbol %s", symbol);
-                        return Field.newUnqualified(symbol.getName(), type);
-                    }
+        List<Field> fields = DependencyExtractor.extractUnique(expressions).stream()
+                .map(symbol -> {
+                    Type type = types.get(symbol);
+                    checkArgument(type != null, "No type for symbol %s", symbol);
+                    return Field.newUnqualified(symbol.getName(), type);
                 })
-                .list();
+                .collect(toImmutableList());
 
         return analyzeExpressions(session, metadata, sqlParser, new TupleDescriptor(fields), expressions);
     }
@@ -916,7 +929,7 @@ public class ExpressionAnalyzer
     {
         Field[] fields = new Field[types.size()];
         for (Entry<Integer, Type> entry : types.entrySet()) {
-            fields[entry.getKey()] = Field.newUnqualified(Optional.<String>absent(), entry.getValue());
+            fields[entry.getKey()] = Field.newUnqualified(Optional.empty(), entry.getValue());
         }
         TupleDescriptor tupleDescriptor = new TupleDescriptor(fields);
 

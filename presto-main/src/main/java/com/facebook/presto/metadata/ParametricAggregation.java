@@ -66,8 +66,8 @@ public abstract class ParametricAggregation
     }
 
     @Override
-    public FunctionInfo specialize(Map<String, Type> types, List<TypeSignature> typeSignatures, TypeManager typeManager)
+    public FunctionInfo specialize(Map<String, Type> types, List<TypeSignature> typeSignatures, TypeManager typeManager, FunctionRegistry functionRegistry)
     {
-        return specialize(types, typeSignatures.size(), typeManager);
+        return specialize(types, typeSignatures.size(), typeManager, functionRegistry);
     }
 }

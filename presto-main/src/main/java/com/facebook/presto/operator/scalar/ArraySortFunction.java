@@ -14,12 +14,10 @@
 package com.facebook.presto.operator.scalar;
 
 import com.facebook.presto.metadata.FunctionInfo;
+import com.facebook.presto.metadata.FunctionRegistry;
 import com.facebook.presto.metadata.ParametricScalar;
 import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.spi.PrestoException;
-import com.facebook.presto.spi.block.Block;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,7 +25,6 @@ import com.fasterxml.jackson.databind.type.CollectionType;
 import com.google.common.collect.ImmutableList;
 import io.airlift.json.ObjectMapperProvider;
 import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
@@ -39,6 +36,7 @@ import java.util.Map;
 import static com.facebook.presto.metadata.Signature.orderableTypeParameter;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static com.facebook.presto.type.ArrayType.toStackRepresentation;
+import static com.facebook.presto.type.TypeJsonUtils.createBlock;
 import static com.facebook.presto.type.TypeUtils.parameterizedTypeName;
 import static com.facebook.presto.util.Reflection.methodHandle;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -79,7 +77,7 @@ public final class ArraySortFunction
     }
 
     @Override
-    public FunctionInfo specialize(Map<String, Type> types, int arity, TypeManager typeManager)
+    public FunctionInfo specialize(Map<String, Type> types, int arity, TypeManager typeManager, FunctionRegistry functionRegistry)
     {
         checkArgument(types.size() == 1, format("%s expects only one argument", FUNCTION_NAME));
         Type type = types.get("E");
@@ -108,27 +106,5 @@ public final class ArraySortFunction
             }
         });
         return toStackRepresentation(elements);
-    }
-
-    private static Block createBlock(Type type, Object element)
-    {
-        BlockBuilder blockBuilder = type.createBlockBuilder(new BlockBuilderStatus());
-        Class<?> javaType = type.getJavaType();
-        if (javaType == boolean.class) {
-            type.writeBoolean(blockBuilder, (Boolean) element);
-        }
-        else if (javaType == long.class) {
-            type.writeLong(blockBuilder, ((Number) element).longValue());
-        }
-        else if (javaType == double.class) {
-            type.writeDouble(blockBuilder, (Double) element);
-        }
-        else if (javaType == Slice.class) {
-            type.writeSlice(blockBuilder, Slices.utf8Slice(element.toString()));
-        }
-        else {
-            throw new PrestoException(INVALID_FUNCTION_ARGUMENT, format("Unexpected type %s", javaType.getName()));
-        }
-        return blockBuilder.build();
     }
 }

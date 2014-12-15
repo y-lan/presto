@@ -21,7 +21,6 @@ import com.facebook.presto.spi.ErrorCode;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.sql.planner.plan.TableScanNode;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
@@ -44,9 +43,7 @@ import java.util.concurrent.Executor;
 import static com.facebook.presto.execution.QueryState.CANCELED;
 import static com.facebook.presto.execution.QueryState.FAILED;
 import static com.facebook.presto.execution.QueryState.FINISHED;
-import static com.facebook.presto.execution.QueryState.inDoneState;
 import static com.facebook.presto.execution.StageInfo.getAllStages;
-import static com.facebook.presto.execution.StageInfo.stageStateGetter;
 import static com.facebook.presto.spi.StandardErrorCode.USER_CANCELED;
 import static com.facebook.presto.util.Failures.toFailure;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -303,7 +300,7 @@ public class QueryStateMachine
     public synchronized boolean running()
     {
         // transition to running if not already done
-        return queryState.setIf(QueryState.RUNNING, Predicates.not(inDoneState()));
+        return queryState.setIf(QueryState.RUNNING, Predicates.not(QueryState::isDone));
     }
 
     public boolean finished()
@@ -313,7 +310,7 @@ public class QueryStateMachine
                 endTime = DateTime.now();
             }
         }
-        return queryState.setIf(FINISHED, Predicates.not(inDoneState()));
+        return queryState.setIf(FINISHED, Predicates.not(QueryState::isDone));
     }
 
     public boolean cancel()
@@ -328,7 +325,7 @@ public class QueryStateMachine
                 failureCause = new PrestoException(USER_CANCELED, "Query was canceled");
             }
         }
-        return queryState.setIf(CANCELED, Predicates.not(inDoneState()));
+        return queryState.setIf(CANCELED, Predicates.not(QueryState::isDone));
     }
 
     public boolean fail(@Nullable Throwable cause)
@@ -348,7 +345,7 @@ public class QueryStateMachine
                 }
             }
         }
-        return queryState.setIf(FAILED, Predicates.not(inDoneState()));
+        return queryState.setIf(FAILED, Predicates.not(QueryState::isDone));
     }
 
     public void addStateChangeListener(StateChangeListener<QueryState> stateChangeListener)
@@ -390,19 +387,7 @@ public class QueryStateMachine
             return false;
         }
         return FluentIterable.from(getAllStages(rootStage))
-                .transform(stageStateGetter())
-                .allMatch(isStageRunningOrDone());
-    }
-
-    private static Predicate<StageState> isStageRunningOrDone()
-    {
-        return new Predicate<StageState>()
-        {
-            @Override
-            public boolean apply(StageState state)
-            {
-                return (state == StageState.RUNNING) || state.isDone();
-            }
-        };
+                .transform(StageInfo::getState)
+                .allMatch(state -> (state == StageState.RUNNING) || state.isDone());
     }
 }

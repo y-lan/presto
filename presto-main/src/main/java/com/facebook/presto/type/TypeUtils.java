@@ -22,14 +22,12 @@ import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.facebook.presto.spi.type.TypeSignature;
-import com.google.common.base.Function;
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 
 import java.util.Arrays;
 import java.util.List;
 
-import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -57,37 +55,11 @@ public final class TypeUtils
         return type.equalTo(leftBlock, leftPosition, rightBlock, rightPosition);
     }
 
-    public static Function<Type, TypeSignature> typeSignatureGetter()
-    {
-        return new Function<Type, TypeSignature>() {
-            @Override
-            public TypeSignature apply(Type input)
-            {
-                return input.getTypeSignature();
-            }
-        };
-    }
-
-    public static Function<String, TypeSignature> typeSignatureParser()
-    {
-        return new Function<String, TypeSignature>() {
-            @Override
-            public TypeSignature apply(String input)
-            {
-                return parseTypeSignature(input);
-            }
-        };
-    }
-
     public static List<Type> resolveTypes(List<TypeSignature> typeNames, final TypeManager typeManager)
     {
-        return FluentIterable.from(typeNames).transform(new Function<TypeSignature, Type>() {
-            @Override
-            public Type apply(TypeSignature type)
-            {
-                return checkNotNull(typeManager.getType(type), "Type '%s' not found", type);
-            }
-        }).toList();
+        return typeNames.stream()
+                .map((TypeSignature type) -> checkNotNull(typeManager.getType(type), "Type '%s' not found", type))
+                .collect(toImmutableList());
     }
 
     public static TypeSignature parameterizedTypeName(String base, TypeSignature... argumentNames)
