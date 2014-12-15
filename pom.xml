@@ -642,6 +642,13 @@
               <artifactId>fastjson</artifactId>
               <version>1.1.41</version>
             </dependency>
+
+            <dependency>
+                <groupId>org.openx.data</groupId>
+                <artifactId>json-serde</artifactId>
+                <version>1.3</version>
+                <classifier>jar-with-dependencies</classifier>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

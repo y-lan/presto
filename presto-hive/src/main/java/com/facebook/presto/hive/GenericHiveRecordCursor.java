@@ -358,6 +358,9 @@ class GenericHiveRecordCursor<K, V extends Writable>
 
             return utcMillis;
         }
+        if (value instanceof String) {
+            return Long.parseLong((String) value);
+        }
         return ((Number) value).longValue();
     }
 

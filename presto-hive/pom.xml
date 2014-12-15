@@ -252,6 +252,24 @@
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>org.openx.data</groupId>
+            <artifactId>json-serde</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.openx.data</groupId>
+                    <artifactId>json-serde-cdh4-shim</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.openx.data</groupId>
+                    <artifactId>json</artifactId>
+                </exclusion>
+            </exclusions>
+            <version>1.3</version>
+            <classifier>jar-with-dependencies</classifier>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- for benchmark -->
         <dependency>
             <groupId>com.facebook.presto</groupId>
