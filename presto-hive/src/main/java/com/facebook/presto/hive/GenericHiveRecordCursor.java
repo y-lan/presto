@@ -391,7 +391,12 @@ class GenericHiveRecordCursor<K, V extends Writable>
         else {
             Object fieldValue = ((PrimitiveObjectInspector) fieldInspectors[column]).getPrimitiveJavaObject(fieldData);
             checkState(fieldValue != null, "fieldValue should not be null");
-            doubles[column] = ((Number) fieldValue).doubleValue();
+            if (fieldValue instanceof String) {
+                doubles[column] = Double.parseDouble((String) fieldValue);
+            }
+            else {
+                doubles[column] = ((Number) fieldValue).doubleValue();
+            }
             nulls[column] = false;
         }
     }
