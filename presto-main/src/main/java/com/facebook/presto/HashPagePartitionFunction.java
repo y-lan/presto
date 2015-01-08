@@ -22,10 +22,10 @@ import com.facebook.presto.spi.type.Type;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Optional;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -109,6 +109,7 @@ public final class HashPagePartitionFunction
                     continue;
                 }
 
+                pageBuilder.declarePosition();
                 for (int channel = 0; channel < types.size(); channel++) {
                     Type type = types.get(channel);
                     type.appendTo(page.getBlock(channel), position, pageBuilder.getBlockBuilder(channel));

@@ -11,23 +11,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.util;
+package com.facebook.presto.orc.reader;
 
-import com.google.common.base.Optional;
+import com.facebook.presto.orc.OrcCorruptionException;
 
-public final class Optionals
+final class OrcReaderUtils
 {
-    private Optionals() {}
-
-    @Deprecated
-    public static <T> Optional<T> guavaOptional(java.util.Optional<T> optional)
+    private OrcReaderUtils()
     {
-        return Optional.fromNullable(optional.orElse(null));
     }
 
-    @Deprecated
-    public static <T> java.util.Optional<T> jdkOptional(Optional<T> optional)
+    public static <T> T castOrcVector(Object vector, Class<T> type)
+            throws OrcCorruptionException
     {
-        return java.util.Optional.ofNullable(optional.orNull());
+        if (!type.isInstance(vector)) {
+            throw new OrcCorruptionException("Expected %s, but got %s", type.getSimpleName(), vector.getClass().getName());
+        }
+        return type.cast(vector);
     }
 }

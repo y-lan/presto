@@ -5,12 +5,12 @@
     <parent>
         <groupId>io.airlift</groupId>
         <artifactId>airbase</artifactId>
-        <version>29</version>
+        <version>30</version>
     </parent>
 
     <groupId>com.facebook.presto</groupId>
     <artifactId>presto-root</artifactId>
-    <version>0.88</version>
+    <version>0.89</version>
     <packaging>pom</packaging>
 
     <name>presto-root</name>
@@ -30,11 +30,10 @@
     <scm>
         <connection>scm:git:git://github.com/facebook/presto.git</connection>
         <url>https://github.com/facebook/presto</url>
-        <tag>0.88</tag>
+        <tag>0.89</tag>
     </scm>
 
     <properties>
-        <project.build.targetJdk>1.8</project.build.targetJdk>
         <air.main.basedir>${project.basedir}</air.main.basedir>
 
         <air.check.skip-extended>true</air.check.skip-extended>
@@ -45,7 +44,7 @@
 
         <dep.antlr.version>3.4</dep.antlr.version>
         <dep.slice.version>0.7</dep.slice.version>
-        <dep.airlift.version>0.98</dep.airlift.version>
+        <dep.airlift.version>0.99</dep.airlift.version>
         <dep.packaging.version>${dep.airlift.version}</dep.packaging.version>
 
         <cli.skip-execute>true</cli.skip-execute>
@@ -80,6 +79,7 @@
         <module>presto-tests</module>
         <module>presto-jdbc</module>
         <module>presto-cli</module>
+        <module>presto-benchmark-driver</module>
         <module>presto-server</module>
         <module>presto-docs</module>
         <module>presto-verifier</module>
@@ -162,6 +162,12 @@
             <dependency>
                 <groupId>com.facebook.presto</groupId>
                 <artifactId>presto-raptor</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.facebook.presto</groupId>
+                <artifactId>presto-cli</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
@@ -404,7 +410,7 @@
             <dependency>
                 <groupId>io.airlift.tpch</groupId>
                 <artifactId>tpch</artifactId>
-                <version>0.3</version>
+                <version>0.4</version>
             </dependency>
 
             <dependency>

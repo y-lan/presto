@@ -111,10 +111,7 @@ import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.ExpressionTreeRewriter;
 import com.facebook.presto.sql.tree.FunctionCall;
 import com.facebook.presto.sql.tree.QualifiedNameReference;
-import com.facebook.presto.util.IterableTransformer;
-import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.base.Optional;
 import com.google.common.base.Predicates;
 import com.google.common.base.Supplier;
 import com.google.common.collect.FluentIterable;
@@ -143,7 +140,9 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 import static com.facebook.presto.operator.DistinctLimitOperator.DistinctLimitOperatorFactory;
 import static com.facebook.presto.operator.TableCommitOperator.TableCommitOperatorFactory;
@@ -243,7 +242,7 @@ public class LocalExecutionPlanner
 
         public LocalExecutionPlanContext(Session session, Map<Symbol, Type> types)
         {
-            this(session, types, new ArrayList<DriverFactory>(), Optional.<IndexSourceContext>absent());
+            this(session, types, new ArrayList<>(), Optional.empty());
         }
 
         private LocalExecutionPlanContext(Session session, Map<Symbol, Type> types, List<DriverFactory> driverFactories, Optional<IndexSourceContext> indexSourceContext)
@@ -366,10 +365,11 @@ public class LocalExecutionPlanner
             //   2. verify that symbols from "source" match the expected order of columns according to OutputNode
             Ordering<Integer> comparator = Ordering.natural();
 
-            List<Symbol> sourceSymbols = IterableTransformer.on(source.getLayout().entrySet())
-                    .orderBy(comparator.onResultOf(Map.Entry::getValue))
-                    .transform(Map.Entry::getKey)
-                    .list();
+            List<Symbol> sourceSymbols = source.getLayout()
+                    .entrySet().stream()
+                    .sorted(comparator.onResultOf(Map.Entry::getValue))
+                    .map(Map.Entry::getKey)
+                    .collect(toImmutableList());
 
             List<Symbol> resultSymbols = node.getOutputSymbols();
             if (resultSymbols.equals(sourceSymbols) && resultSymbols.size() == source.getTypes().size()) {
@@ -413,7 +413,7 @@ public class LocalExecutionPlanner
             int channel = source.getTypes().size();
             outputMappings.put(node.getRowNumberSymbol(), channel);
 
-            Optional<Integer> hashChannel = node.getHashSymbol().transform(channelGetter(source));
+            Optional<Integer> hashChannel = node.getHashSymbol().map(channelGetter(source));
             OperatorFactory operatorFactory = new RowNumberOperator.RowNumberOperatorFactory(
                     context.getNextOperatorId(),
                     source.getTypes(),
@@ -458,7 +458,7 @@ public class LocalExecutionPlanner
                 outputMappings.put(node.getRowNumberSymbol(), channel);
             }
 
-            Optional<Integer> hashChannel = node.getHashSymbol().transform(channelGetter(source));
+            Optional<Integer> hashChannel = node.getHashSymbol().map(channelGetter(source));
             OperatorFactory operatorFactory = new TopNRowNumberOperator.TopNRowNumberOperatorFactory(
                     context.getNextOperatorId(),
                     source.getTypes(),
@@ -489,8 +489,8 @@ public class LocalExecutionPlanner
                     .map(symbol -> node.getOrderings().get(symbol))
                     .collect(toImmutableList());
 
-            Optional<Integer> frameStartChannel = Optional.absent();
-            Optional<Integer> frameEndChannel = Optional.absent();
+            Optional<Integer> frameStartChannel = Optional.empty();
+            Optional<Integer> frameEndChannel = Optional.empty();
             if (node.getFrame().getStartValue().isPresent()) {
                 frameStartChannel = Optional.of(source.getLayout().get(node.getFrame().getStartValue().get()));
             }
@@ -618,7 +618,7 @@ public class LocalExecutionPlanner
         {
             PhysicalOperation source = node.getSource().accept(this, context);
 
-            Optional<Integer> hashChannel = node.getHashSymbol().transform(channelGetter(source));
+            Optional<Integer> hashChannel = node.getHashSymbol().map(channelGetter(source));
             List<Integer> distinctChannels = getChannelsForSymbols(node.getDistinctSymbols(), source.getLayout());
 
             OperatorFactory operatorFactory = new DistinctLimitOperatorFactory(
@@ -648,7 +648,7 @@ public class LocalExecutionPlanner
             PhysicalOperation source = node.getSource().accept(this, context);
 
             List<Integer> channels = getChannelsForSymbols(node.getDistinctSymbols(), source.getLayout());
-            Optional<Integer> hashChannel = node.getHashSymbol().transform(channelGetter(source));
+            Optional<Integer> hashChannel = node.getHashSymbol().map(channelGetter(source));
             MarkDistinctOperatorFactory operator = new MarkDistinctOperatorFactory(context.getNextOperatorId(), source.getTypes(), channels, hashChannel);
             return new PhysicalOperation(operator, makeLayout(node), source);
         }
@@ -1054,7 +1054,7 @@ public class LocalExecutionPlanner
             // Plan probe side
             PhysicalOperation probeSource = node.getProbeSource().accept(this, context);
             List<Integer> probeChannels = getChannelsForSymbols(probeSymbols, probeSource.getLayout());
-            Optional<Integer> probeHashChannel = node.getProbeHashSymbol().transform(channelGetter(probeSource));
+            Optional<Integer> probeHashChannel = node.getProbeHashSymbol().map(channelGetter(probeSource));
 
             // The probe key channels will be handed to the index according to probeSymbol order
             Map<Symbol, Integer> probeKeyLayout = new HashMap<>();
@@ -1068,7 +1068,7 @@ public class LocalExecutionPlanner
             LocalExecutionPlanContext indexContext = context.createIndexSourceSubContext(new IndexSourceContext(indexLookupToProbeInput));
             PhysicalOperation indexSource = node.getIndexSource().accept(this, indexContext);
             List<Integer> indexOutputChannels = getChannelsForSymbols(indexSymbols, indexSource.getLayout());
-            Optional<Integer> indexHashChannel = node.getIndexHashSymbol().transform(channelGetter(indexSource));
+            Optional<Integer> indexHashChannel = node.getIndexHashSymbol().map(channelGetter(indexSource));
 
             // Identify just the join keys/channels needed for lookup by the index source (does not have to use all of them).
             Set<Symbol> indexSymbolsNeededBySource = IndexJoinOptimizer.IndexKeyTracer.trace(node.getIndexSource(), ImmutableSet.copyOf(indexSymbols)).keySet();
@@ -1079,7 +1079,7 @@ public class LocalExecutionPlanner
                     .transform(Functions.forMap(probeKeyLayout))
                     .toSet();
 
-            Optional<DynamicTupleFilterFactory> dynamicTupleFilterFactory = Optional.absent();
+            Optional<DynamicTupleFilterFactory> dynamicTupleFilterFactory = Optional.empty();
             if (lookupSourceInputChannels.size() < probeKeyLayout.values().size()) {
                 int[] nonLookupInputChannels = Ints.toArray(FluentIterable.from(node.getCriteria())
                         .filter(Predicates.compose(not(in(indexSymbolsNeededBySource)), IndexJoinNode.EquiJoinClause::getIndex))
@@ -1167,13 +1167,13 @@ public class LocalExecutionPlanner
             // Plan probe and introduce a projection to put all fields from the probe side into a single channel if necessary
             PhysicalOperation probeSource = probeNode.accept(this, context);
             List<Integer> probeChannels = ImmutableList.copyOf(getChannelsForSymbols(probeSymbols, probeSource.getLayout()));
-            Optional<Integer> probeHashChannel = probeHashSymbol.transform(channelGetter(probeSource));
+            Optional<Integer> probeHashChannel = probeHashSymbol.map(channelGetter(probeSource));
 
             // do the same on the build side
             LocalExecutionPlanContext buildContext = context.createSubContext();
             PhysicalOperation buildSource = buildNode.accept(this, buildContext);
             List<Integer> buildChannels = ImmutableList.copyOf(getChannelsForSymbols(buildSymbols, buildSource.getLayout()));
-            Optional<Integer> buildHashChannel = buildHashSymbol.transform(channelGetter(buildSource));
+            Optional<Integer> buildHashChannel = buildHashSymbol.map(channelGetter(buildSource));
 
             HashBuilderOperatorFactory hashBuilderOperatorFactory = new HashBuilderOperatorFactory(
                     buildContext.getNextOperatorId(),
@@ -1238,8 +1238,8 @@ public class LocalExecutionPlanner
             int probeChannel = probeSource.getLayout().get(node.getSourceJoinSymbol());
             int buildChannel = buildSource.getLayout().get(node.getFilteringSourceJoinSymbol());
 
-            Optional<Integer> probeHashChannel = node.getSourceHashSymbol().transform(channelGetter(probeSource));
-            Optional<Integer> buildHashChannel = node.getFilteringSourceHashSymbol().transform(channelGetter(buildSource));
+            Optional<Integer> probeHashChannel = node.getSourceHashSymbol().map(channelGetter(probeSource));
+            Optional<Integer> buildHashChannel = node.getFilteringSourceHashSymbol().map(channelGetter(buildSource));
 
             SetBuilderOperatorFactory setBuilderOperatorFactory = new SetBuilderOperatorFactory(buildContext.getNextOperatorId(), buildSource.getTypes(), buildChannel, buildHashChannel, 100_000);
             SetSupplier setProvider = setBuilderOperatorFactory.getSetProvider();
@@ -1268,10 +1268,11 @@ public class LocalExecutionPlanner
             PhysicalOperation source = node.getSource().accept(this, context);
 
             // are the symbols of the source in the same order as the sink expects?
-            boolean projectionMatchesOutput = IterableTransformer.on(source.getLayout().entrySet())
-                    .orderBy(Ordering.<Integer>natural().onResultOf(Map.Entry::getValue))
-                    .transform(Map.Entry::getKey)
-                    .list()
+            boolean projectionMatchesOutput = source.getLayout()
+                    .entrySet().stream()
+                    .sorted(Ordering.<Integer>natural().onResultOf(Map.Entry::getValue))
+                    .map(Map.Entry::getKey)
+                    .collect(toImmutableList())
                     .equals(node.getOutputSymbols());
 
             if (!projectionMatchesOutput) {
@@ -1294,18 +1295,18 @@ public class LocalExecutionPlanner
             // serialize writes by forcing data through a single writer
             PhysicalOperation exchange = createInMemoryExchange(node.getSource(), context);
 
-            Optional<Integer> sampleWeightChannel = node.getSampleWeightSymbol().transform(exchange::symbolToChannel);
+            Optional<Integer> sampleWeightChannel = node.getSampleWeightSymbol().map(exchange::symbolToChannel);
 
             // create the table writer
             RecordSink recordSink = getRecordSink(node);
 
-            List<Type> types = IterableTransformer.on(node.getColumns())
-                    .transform(forMap(context.getTypes()))
-                    .list();
+            List<Type> types = node.getColumns().stream()
+                    .map(context.getTypes()::get)
+                    .collect(toImmutableList());
 
-            List<Integer> inputChannels = IterableTransformer.on(node.getColumns())
-                    .transform(exchange::symbolToChannel)
-                    .list();
+            List<Integer> inputChannels = node.getColumns().stream()
+                    .map(exchange::symbolToChannel)
+                    .collect(toImmutableList());
 
             OperatorFactory operatorFactory = new TableWriterOperatorFactory(context.getNextOperatorId(), recordSink, types, inputChannels, sampleWeightChannel);
 
@@ -1368,10 +1369,11 @@ public class LocalExecutionPlanner
                 PhysicalOperation source = subplan.accept(this, subContext);
                 List<OperatorFactory> operatorFactories = new ArrayList<>(source.getOperatorFactories());
 
-                boolean projectionMatchesOutput = IterableTransformer.on(source.getLayout().entrySet())
-                        .orderBy(Ordering.<Integer>natural().onResultOf(Map.Entry::getValue))
-                        .transform(Map.Entry::getKey)
-                        .list()
+                boolean projectionMatchesOutput = source.getLayout()
+                        .entrySet().stream()
+                        .sorted(Ordering.<Integer>natural().onResultOf(Map.Entry::getValue))
+                        .map(Map.Entry::getKey)
+                        .collect(toImmutableList())
                         .equals(expectedLayout);
 
                 if (!projectionMatchesOutput) {
@@ -1408,9 +1410,9 @@ public class LocalExecutionPlanner
 
         private List<Type> getSymbolTypes(List<Symbol> symbols, Map<Symbol, Type> types)
         {
-            return ImmutableList.copyOf(IterableTransformer.on(symbols)
-                    .transform(forMap(types))
-                    .list());
+            return symbols.stream()
+                    .map(types::get)
+                    .collect(toImmutableList());
         }
 
         private AccumulatorFactory buildAccumulatorFactory(PhysicalOperation source, Signature function, FunctionCall call, @Nullable Symbol mask, Optional<Symbol> sampleWeight, double confidence)
@@ -1421,13 +1423,13 @@ public class LocalExecutionPlanner
                 arguments.add(source.getLayout().get(argumentSymbol));
             }
 
-            Optional<Integer> maskChannel = Optional.absent();
+            Optional<Integer> maskChannel = Optional.empty();
 
             if (mask != null) {
                 maskChannel = Optional.of(source.getLayout().get(mask));
             }
 
-            Optional<Integer> sampleWeightChannel = Optional.absent();
+            Optional<Integer> sampleWeightChannel = Optional.empty();
             if (sampleWeight.isPresent()) {
                 sampleWeightChannel = Optional.of(source.getLayout().get(sampleWeight.get()));
             }
@@ -1489,7 +1491,7 @@ public class LocalExecutionPlanner
                     .map(entry -> source.getTypes().get(entry))
                     .collect(toImmutableList());
 
-            Optional<Integer> hashChannel = node.getHashSymbol().transform(channelGetter(source));
+            Optional<Integer> hashChannel = node.getHashSymbol().map(channelGetter(source));
 
             OperatorFactory operatorFactory = new HashAggregationOperatorFactory(
                     context.getNextOperatorId(),

@@ -33,10 +33,9 @@ import com.facebook.presto.sql.planner.plan.ExchangeNode;
 import com.facebook.presto.sql.planner.plan.PlanFragmentId;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
-import com.facebook.presto.util.IterableTransformer;
+import com.facebook.presto.sql.planner.plan.SinkNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Functions;
-import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.HashMultimap;
@@ -64,6 +63,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -78,6 +78,7 @@ import static com.facebook.presto.OutputBuffers.INITIAL_EMPTY_OUTPUT_BUFFERS;
 import static com.facebook.presto.spi.StandardErrorCode.NO_NODES_AVAILABLE;
 import static com.facebook.presto.util.Failures.checkCondition;
 import static com.facebook.presto.util.Failures.toFailures;
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -225,14 +226,7 @@ public class SqlStageExecution
                         executor,
                         nodeTaskMap);
 
-                subStage.addStateChangeListener(new StateChangeListener<StageInfo>()
-                {
-                    @Override
-                    public void stateChanged(StageInfo stageInfo)
-                    {
-                        doUpdateState();
-                    }
-                });
+                subStage.addStateChangeListener(stageInfo -> doUpdateState());
 
                 subStages.put(subStageFragmentId, subStage);
             }
@@ -243,14 +237,7 @@ public class SqlStageExecution
             this.nodeScheduler = nodeScheduler;
             this.nodeTaskMap = nodeTaskMap;
             stageState = new StateMachine<>("stage " + stageId, this.executor, StageState.PLANNED);
-            stageState.addStateChangeListener(new StateChangeListener<StageState>()
-            {
-                @Override
-                public void stateChanged(StageState newValue)
-                {
-                    log.debug("Stage %s is %s", stageId, newValue);
-                }
-            });
+            stageState.addStateChangeListener(state -> log.debug("Stage %s is %s", stageId, state));
         }
     }
 
@@ -288,8 +275,13 @@ public class SqlStageExecution
             // never be visible.
             StageState state = stageState.get();
 
-            List<TaskInfo> taskInfos = IterableTransformer.on(tasks.values()).transform(RemoteTask::getTaskInfo).list();
-            List<StageInfo> subStageInfos = IterableTransformer.on(subStages.values()).transform(StageExecutionNode::getStageInfo).list();
+            List<TaskInfo> taskInfos = tasks.values().stream()
+                    .map(RemoteTask::getTaskInfo)
+                    .collect(toImmutableList());
+
+            List<StageInfo> subStageInfos = subStages.values().stream()
+                    .map(StageExecutionNode::getStageInfo)
+                    .collect(toImmutableList());
 
             int totalTasks = taskInfos.size();
             int runningTasks = 0;
@@ -415,7 +407,7 @@ public class SqlStageExecution
             ImmutableMap.Builder<TaskId, PagePartitionFunction> buffers = ImmutableMap.builder();
             for (int nodeIndex = 0; nodeIndex < parentTasks.size(); nodeIndex++) {
                 TaskId taskId = parentTasks.get(nodeIndex);
-                buffers.put(taskId, new HashPagePartitionFunction(nodeIndex, parentTasks.size(), fragment.getPartitioningChannels(), fragment.getHashChannel(), fragment.getTypes()));
+                buffers.put(taskId, new HashPagePartitionFunction(nodeIndex, parentTasks.size(), getPartitioningChannels(fragment), getHashChannel(fragment), fragment.getTypes()));
             }
 
             newOutputBuffers = startingOutputBuffers
@@ -529,14 +521,7 @@ public class SqlStageExecution
             for (StageExecutionNode subStage : subStages.values()) {
                 subStage.scheduleStartTasks();
             }
-            return executor.submit(new Runnable()
-            {
-                @Override
-                public void run()
-                {
-                    startTasks();
-                }
-            });
+            return executor.submit(this::startTasks);
         }
     }
 
@@ -700,7 +685,10 @@ public class SqlStageExecution
             // waiting for the "noMoreBuffers" call
             nodeSelector.lockDownNodes();
             for (Node node : Sets.difference(new HashSet<>(nodeSelector.allNodes()), localNodeTaskMap.keySet())) {
-                scheduleTask(nextTaskId.getAndIncrement(), node);
+                RemoteTask remoteTask = scheduleTask(nextTaskId.getAndIncrement(), node);
+
+                // tell the sub stages to create a buffer for this task
+                addStageNode(remoteTask.getTaskInfo().getTaskId());
             }
             // tell sub stages there will be no more output buffers
             setNoMoreStageNodes();
@@ -761,14 +749,7 @@ public class SqlStageExecution
                 initialSplits.build(),
                 getCurrentOutputBuffers());
 
-        task.addStateChangeListener(new StateChangeListener<TaskInfo>()
-        {
-            @Override
-            public void stateChanged(TaskInfo taskInfo)
-            {
-                doUpdateState();
-            }
-        });
+        task.addStateChangeListener(taskInfo -> doUpdateState());
 
         // create and update task
         task.start();
@@ -988,6 +969,21 @@ public class SqlStageExecution
                 .add("location", location)
                 .add("stageState", stageState.get())
                 .toString();
+    }
+
+    private static Optional<Integer> getHashChannel(PlanFragment fragment)
+    {
+        return fragment.getHash().map(symbol -> fragment.getRoot().getOutputSymbols().indexOf(symbol));
+    }
+
+    private static List<Integer> getPartitioningChannels(PlanFragment fragment)
+    {
+        checkState(fragment.getOutputPartitioning() == OutputPartitioning.HASH, "fragment is not hash partitioned");
+        checkState(fragment.getRoot() instanceof SinkNode, "root is not an instance of SinkNode");
+        // We can convert the symbols directly into channels, because the root must be a sink and therefore the layout is fixed
+        return fragment.getPartitionBy().stream()
+                .map(symbol -> fragment.getRoot().getOutputSymbols().indexOf(symbol))
+                .collect(toImmutableList());
     }
 }
 

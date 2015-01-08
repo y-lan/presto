@@ -21,7 +21,6 @@ import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.plan.AggregationNode.Step;
-import com.google.common.base.Optional;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.primitives.Ints;
@@ -31,6 +30,7 @@ import io.airlift.units.DataSize;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -332,6 +332,7 @@ public class HashAggregationOperator
                     while (!pageBuilder.isFull() && groupId < groupCount) {
                         groupByHash.appendValuesTo(groupId, pageBuilder, 0);
 
+                        pageBuilder.declarePosition();
                         for (int i = 0; i < aggregators.size(); i++) {
                             Aggregator aggregator = aggregators.get(i);
                             BlockBuilder output = pageBuilder.getBlockBuilder(types.size() + i);

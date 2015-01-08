@@ -54,9 +54,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
-import static com.facebook.presto.hive.HiveErrorCode.HIVE_BAD_DATA;
+import static com.facebook.presto.hive.HiveErrorCode.HIVE_INVALID_PARTITION_VALUE;
 import static com.facebook.presto.hive.HivePartitionKey.HIVE_DEFAULT_DYNAMIC_PARTITION;
 import static com.facebook.presto.hive.HiveType.HIVE_BOOLEAN;
 import static com.facebook.presto.hive.HiveType.HIVE_BYTE;
@@ -95,6 +96,7 @@ public final class HiveUtil
     private static final String VIEW_PREFIX = "/* Presto View: ";
     private static final String VIEW_SUFFIX = " */";
 
+    private static final DateTimeFormatter HIVE_DATE_PARSER = ISODateTimeFormat.date().withZoneUTC();
     private static final DateTimeFormatter HIVE_TIMESTAMP_PARSER;
 
     static {
@@ -180,7 +182,8 @@ public final class HiveUtil
             throws ClassNotFoundException
     {
         // CDH uses different names for Parquet
-        if ("parquet.hive.DeprecatedParquetInputFormat".equals(inputFormatName)) {
+        if ("parquet.hive.DeprecatedParquetInputFormat".equals(inputFormatName) ||
+            "parquet.hive.MapredParquetInputFormat".equals(inputFormatName)) {
             return MapredParquetInputFormat.class;
         }
 
@@ -194,6 +197,12 @@ public final class HiveUtil
         String name = schema.getProperty(FILE_INPUT_FORMAT);
         checkArgument(name != null, "missing property: %s", FILE_INPUT_FORMAT);
         return name;
+    }
+
+    public static long parseHiveDate(String value)
+    {
+        long millis = HIVE_DATE_PARSER.parseMillis(value);
+        return TimeUnit.MILLISECONDS.toDays(millis);
     }
 
     public static long parseHiveTimestamp(String value, DateTimeZone timeZone)
@@ -334,7 +343,7 @@ public final class HiveUtil
                 if (isNull) {
                     return new SerializableNativeValue(Long.class, null);
                 }
-                long dateInMillis = ISODateTimeFormat.date().withZone(DateTimeZone.UTC).parseMillis(value);
+                long dateInMillis = parseHiveDate(value);
                 return new SerializableNativeValue(Long.class, dateInMillis);
             }
 
@@ -363,14 +372,11 @@ public final class HiveUtil
             }
         }
         catch (RuntimeException e) {
-            throw new PrestoException(HIVE_BAD_DATA, format(
-                    "Cannot parse value %s with declared hive type [%s] for partition: %s",
-                    value,
-                    hiveType,
-                    partitionName));
+            throw new PrestoException(HIVE_INVALID_PARTITION_VALUE, format(
+                    "Invalid partition value '%s' for Hive type [%s] partition key: %s", value, hiveType, partitionName));
         }
 
-        throw new PrestoException(NOT_SUPPORTED, format("Unsupported partition type [%s] for partition: %s", hiveType, partitionName));
+        throw new PrestoException(NOT_SUPPORTED, format("Unsupported Hive type [%s] for partition: %s", hiveType, partitionName));
     }
 
     public static boolean isPrestoView(Table table)
@@ -405,5 +411,56 @@ public final class HiveUtil
     public static boolean isStructuralType(HiveType hiveType)
     {
         return hiveType.getCategory() == Category.LIST || hiveType.getCategory() == Category.MAP || hiveType.getCategory() == Category.STRUCT;
+    }
+
+    public static boolean booleanPartitionKey(String value, String name)
+    {
+        if (value.equalsIgnoreCase("true")) {
+            return true;
+        }
+        if (value.equalsIgnoreCase("false")) {
+            return false;
+        }
+        throw new PrestoException(HIVE_INVALID_PARTITION_VALUE, format("Invalid partition value '%s' for BOOLEAN partition key: %s", value, name));
+    }
+
+    public static long bigintPartitionKey(String value, String name)
+    {
+        try {
+            return parseLong(value);
+        }
+        catch (NumberFormatException e) {
+            throw new PrestoException(HIVE_INVALID_PARTITION_VALUE, format("Invalid partition value '%s' for BIGINT partition key: %s", value, name));
+        }
+    }
+
+    public static double doublePartitionKey(String value, String name)
+    {
+        try {
+            return parseDouble(value);
+        }
+        catch (NumberFormatException e) {
+            throw new PrestoException(HIVE_INVALID_PARTITION_VALUE, format("Invalid partition value '%s' for DOUBLE partition key: %s", value, name));
+        }
+    }
+
+    public static long datePartitionKey(String value, String name)
+    {
+        try {
+            return parseHiveDate(value);
+        }
+        catch (IllegalArgumentException e) {
+            throw new PrestoException(HIVE_INVALID_PARTITION_VALUE, format("Invalid partition value '%s' for DATE partition key: %s", value, name));
+        }
+    }
+
+    public static long timestampPartitionKey(String value, DateTimeZone zone, String name)
+    {
+        try {
+            return parseHiveTimestamp(value, zone);
+        }
+        catch (IllegalArgumentException e) {
+            throw new PrestoException(HIVE_INVALID_PARTITION_VALUE, format("Invalid partition value '%s' for TIMESTAMP partition key: %s", value, name));
+        }
     }
 }

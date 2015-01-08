@@ -85,6 +85,13 @@ public abstract class AbstractTestQueries
     }
 
     @Test
+    public void selectNull()
+            throws Exception
+    {
+        assertQuery("SELECT NULL", "SELECT NULL FROM (SELECT * FROM ORDERS LIMIT 1)");
+    }
+
+    @Test
     public void testRowFieldAccessor()
             throws Exception
     {
@@ -416,7 +423,7 @@ public abstract class AbstractTestQueries
     public void testDistinctGroupBy()
             throws Exception
     {
-        assertQuery("SELECT COUNT(DISTINCT clerk) as count, orderdate FROM orders GROUP BY orderdate ORDER BY count");
+        assertQuery("SELECT COUNT(DISTINCT clerk) as count, orderdate FROM orders GROUP BY orderdate ORDER BY count, orderdate");
     }
 
     @Test
@@ -2150,6 +2157,22 @@ public abstract class AbstractTestQueries
     }
 
     @Test
+    public void testWindowNoChannels()
+    {
+        MaterializedResult actual = computeActual("SELECT rank() OVER ()\n" +
+                "FROM (SELECT * FROM orders LIMIT 10)\n" +
+                "LIMIT 3");
+
+        MaterializedResult expected = resultBuilder(getSession(), BIGINT, VARCHAR, BIGINT)
+                .row(1)
+                .row(1)
+                .row(1)
+                .build();
+
+        assertEquals(actual, expected);
+    }
+
+    @Test
     public void testScalarFunction()
             throws Exception
     {
@@ -2663,7 +2686,7 @@ public abstract class AbstractTestQueries
             @Override
             public String apply(MaterializedRow input)
             {
-                assertEquals(input.getFieldCount(), 5);
+                assertEquals(input.getFieldCount(), 6);
                 return (String) input.getField(0);
             }
         });
@@ -2679,9 +2702,11 @@ public abstract class AbstractTestQueries
 
         assertTrue(functions.containsKey("abs"), "Expected function names " + functions + " to contain 'abs'");
         assertEquals(functions.get("abs").asList().get(0).getField(3), "scalar");
+        assertEquals(functions.get("abs").asList().get(0).getField(4), true);
 
         assertTrue(functions.containsKey("rand"), "Expected function names " + functions + " to contain 'rand'");
-        assertEquals(functions.get("rand").asList().get(0).getField(3), "scalar (non-deterministic)");
+        assertEquals(functions.get("rand").asList().get(0).getField(3), "scalar");
+        assertEquals(functions.get("rand").asList().get(0).getField(4), false);
 
         assertTrue(functions.containsKey("rank"), "Expected function names " + functions + " to contain 'rank'");
         assertEquals(functions.get("rank").asList().get(0).getField(3), "window");
@@ -2771,6 +2796,13 @@ public abstract class AbstractTestQueries
             throws Exception
     {
         assertQuery("SELECT orderkey FROM orders UNION ALL SELECT custkey FROM orders");
+    }
+
+    @Test
+    public void testUnionArray()
+            throws Exception
+    {
+        assertQuery("SELECT a[1] FROM (SELECT ARRAY[1] UNION ALL SELECT ARRAY[1]) t(a) LIMIT 1", "SELECT 1");
     }
 
     @Test

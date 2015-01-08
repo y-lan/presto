@@ -19,7 +19,6 @@ import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MinMaxPriorityQueue;
 import com.google.common.collect.Ordering;
@@ -31,6 +30,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -178,12 +178,12 @@ public class TopNRowNumberOperator
         this.memoryManager = new MemoryManager(operatorContext);
         this.partitionRows = new HashMap<>();
         if (partitionChannels.isEmpty()) {
-            this.groupByHash = Optional.absent();
+            this.groupByHash = Optional.empty();
         }
         else {
             this.groupByHash = Optional.of(new GroupByHash(partitionTypes, Ints.toArray(partitionChannels), hashChannel, expectedPositions));
         }
-        this.flushingPartition = Optional.absent();
+        this.flushingPartition = Optional.empty();
         this.pageBuilder = new PageBuilder(types);
     }
 
@@ -243,7 +243,7 @@ public class TopNRowNumberOperator
 
     private void processPage(Page page)
     {
-        Optional<GroupByIdBlock> partitionIds = Optional.absent();
+        Optional<GroupByIdBlock> partitionIds = Optional.empty();
         if (groupByHash.isPresent()) {
             GroupByHash hash = groupByHash.get();
             long groupByHashSize = hash.getEstimatedSize();
@@ -307,6 +307,8 @@ public class TopNRowNumberOperator
             while (!pageBuilder.isFull() && currentFlushingPartition.hasNext()) {
                 Block[] next = currentFlushingPartition.next();
                 sizeDelta += sizeOfRow(next);
+
+                pageBuilder.declarePosition();
                 for (int i = 0; i < outputChannels.length; i++) {
                     int channel = outputChannels[i];
                     Type type = types.get(channel);
@@ -345,7 +347,7 @@ public class TopNRowNumberOperator
             }
         }
         if (chosenPartitionBuilder == null) {
-            return Optional.absent();
+            return Optional.empty();
         }
         FlushingPartition flushingPartition = new FlushingPartition(chosenPartitionBuilder.build());
         partitionRows.remove(chosenPartitionId);

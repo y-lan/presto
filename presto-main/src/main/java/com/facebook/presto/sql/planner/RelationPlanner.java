@@ -78,13 +78,13 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.EXPRESSION_NOT_CONSTANT;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.NOT_SUPPORTED;
-import static com.facebook.presto.sql.planner.plan.TableScanNode.GeneratedPartitions;
 import static com.facebook.presto.sql.tree.ComparisonExpression.Type.EQUAL;
 import static com.facebook.presto.sql.tree.ComparisonExpression.Type.GREATER_THAN;
 import static com.facebook.presto.sql.tree.ComparisonExpression.Type.GREATER_THAN_OR_EQUAL;
@@ -153,8 +153,8 @@ class RelationPlanner
         }
 
         List<Symbol> nodeOutputSymbols = outputSymbolsBuilder.build();
-        PlanNode root = new TableScanNode(idAllocator.getNextId(), handle, nodeOutputSymbols, columns.build(), null, Optional.<GeneratedPartitions>absent());
-        return new RelationPlan(root, descriptor, planOutputSymbols, Optional.fromNullable(sampleWeightSymbol));
+        PlanNode root = new TableScanNode(idAllocator.getNextId(), handle, nodeOutputSymbols, columns.build(), null, Optional.empty());
+        return new RelationPlan(root, descriptor, planOutputSymbols, Optional.ofNullable(sampleWeightSymbol));
     }
 
     @Override
@@ -182,8 +182,8 @@ class RelationPlanner
         if (node.getType() == SampledRelation.Type.POISSONIZED) {
             sampleWeightSymbol = symbolAllocator.newSymbol("$sampleWeight", BIGINT);
         }
-        PlanNode planNode = new SampleNode(idAllocator.getNextId(), subPlan.getRoot(), ratio, SampleNode.Type.fromType(node.getType()), node.isRescaled(), Optional.fromNullable(sampleWeightSymbol));
-        return new RelationPlan(planNode, outputDescriptor, subPlan.getOutputSymbols(), Optional.fromNullable(sampleWeightSymbol));
+        PlanNode planNode = new SampleNode(idAllocator.getNextId(), subPlan.getRoot(), ratio, SampleNode.Type.fromType(node.getType()), node.isRescaled(), Optional.ofNullable(sampleWeightSymbol));
+        return new RelationPlan(planNode, outputDescriptor, subPlan.getOutputSymbols(), Optional.ofNullable(sampleWeightSymbol));
     }
 
     @Override
@@ -309,8 +309,8 @@ class RelationPlanner
                     leftPlanBuilder.getRoot(),
                     rightPlanBuilder.getRoot(),
                     ImmutableList.<JoinNode.EquiJoinClause>of(),
-                    Optional.<Symbol>absent(),
-                    Optional.<Symbol>absent());
+                    Optional.empty(),
+                    Optional.empty());
             root = new FilterNode(idAllocator.getNextId(), root, postInnerJoinCriteria);
         }
         else {
@@ -319,10 +319,10 @@ class RelationPlanner
                     leftPlanBuilder.getRoot(),
                     rightPlanBuilder.getRoot(),
                     equiClauses.build(),
-                    Optional.<Symbol>absent(),
-                    Optional.<Symbol>absent());
+                    Optional.empty(),
+                    Optional.empty());
         }
-        Optional<Symbol> sampleWeight = Optional.absent();
+        Optional<Symbol> sampleWeight = Optional.empty();
         if (leftPlanBuilder.getSampleWeight().isPresent() || rightPlanBuilder.getSampleWeight().isPresent()) {
             Expression expression = new ArithmeticExpression(ArithmeticExpression.Type.MULTIPLY, oneIfNull(leftPlanBuilder.getSampleWeight()), oneIfNull(rightPlanBuilder.getSampleWeight()));
             sampleWeight = Optional.of(symbolAllocator.newSymbol(expression, BIGINT));
@@ -429,7 +429,7 @@ class RelationPlanner
         checkState(!unnestedSymbolsIterator.hasNext(), "Not all output symbols were matched with input symbols");
 
         UnnestNode unnestNode = new UnnestNode(idAllocator.getNextId(), projectNode, leftPlan.getOutputSymbols(), unnestSymbols.build());
-        return new RelationPlan(unnestNode, outputDescriptor, unnestNode.getOutputSymbols(), Optional.<Symbol>absent());
+        return new RelationPlan(unnestNode, outputDescriptor, unnestNode.getOutputSymbols(), Optional.empty());
     }
 
     private static Expression oneIfNull(Optional<Symbol> symbol)
@@ -494,7 +494,7 @@ class RelationPlanner
         }
 
         ValuesNode valuesNode = new ValuesNode(idAllocator.getNextId(), outputSymbolsBuilder.build(), rows.build());
-        return new RelationPlan(valuesNode, descriptor, outputSymbolsBuilder.build(), Optional.<Symbol>absent());
+        return new RelationPlan(valuesNode, descriptor, outputSymbolsBuilder.build(), Optional.empty());
     }
 
     @Override
@@ -532,7 +532,7 @@ class RelationPlanner
         ValuesNode valuesNode = new ValuesNode(idAllocator.getNextId(), argumentSymbols.build(), ImmutableList.<List<Expression>>of(values.build()));
 
         UnnestNode unnestNode = new UnnestNode(idAllocator.getNextId(), valuesNode, ImmutableList.<Symbol>of(), unnestSymbols.build());
-        return new RelationPlan(unnestNode, descriptor, unnestedSymbols, Optional.<Symbol>absent());
+        return new RelationPlan(unnestNode, descriptor, unnestedSymbols, Optional.empty());
     }
 
     private Expression evaluateConstantExpression(final Expression expression)
@@ -582,7 +582,7 @@ class RelationPlanner
             }
         }
 
-        Optional<Symbol> outputSampleWeight = Optional.absent();
+        Optional<Symbol> outputSampleWeight = Optional.empty();
         for (RelationPlan relationPlan : subPlans) {
             if (hasSampleWeight && !relationPlan.getSampleWeight().isPresent()) {
                 relationPlan = addConstantSampleWeight(relationPlan);
@@ -716,8 +716,8 @@ class RelationPlanner
                         sourceJoinSymbol,
                         filteringSourceJoinSymbol,
                         semiJoinOutputSymbol,
-                        Optional.<Symbol>absent(),
-                        Optional.<Symbol>absent()),
+                        Optional.empty(),
+                        Optional.empty()),
                 subPlan.getSampleWeight());
     }
 
@@ -729,8 +729,8 @@ class RelationPlanner
                 ImmutableMap.<Symbol, FunctionCall>of(),
                 ImmutableMap.<Symbol, Signature>of(),
                 ImmutableMap.<Symbol, Symbol>of(),
-                Optional.<Symbol>absent(),
+                Optional.empty(),
                 1.0,
-                Optional.<Symbol>absent());
+                Optional.empty());
     }
 }

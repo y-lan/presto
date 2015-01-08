@@ -11,21 +11,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.util;
+package com.facebook.presto.benchmark.driver;
 
-import com.google.common.collect.Iterables;
-
-public class NestedIterableTransformer<E>
+public interface BenchmarkResultsStore
 {
-    private final Iterable<Iterable<E>> iterable;
-
-    public NestedIterableTransformer(Iterable<Iterable<E>> iterable)
-    {
-        this.iterable = iterable;
-    }
-
-    public IterableTransformer<E> flatten()
-    {
-        return new IterableTransformer<>(Iterables.concat(iterable));
-    }
+    void store(BenchmarkSchema benchmarkSchema, BenchmarkQueryResult result);
 }

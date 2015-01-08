@@ -51,7 +51,7 @@ import com.facebook.presto.sql.tree.SingleColumn;
 import com.facebook.presto.sql.tree.SortItem;
 import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.sql.tree.StringLiteral;
-import com.facebook.presto.sql.tree.UseCollection;
+import com.facebook.presto.sql.tree.Use;
 import com.facebook.presto.sql.tree.With;
 import com.facebook.presto.sql.tree.WithQuery;
 import com.google.common.base.Joiner;
@@ -95,7 +95,6 @@ import static com.facebook.presto.sql.analyzer.SemanticErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.TABLE_ALREADY_EXISTS;
 import static com.facebook.presto.sql.tree.ExplainFormat.Type.TEXT;
 import static com.facebook.presto.sql.tree.ExplainType.Type.LOGICAL;
-import static com.facebook.presto.util.Optionals.jdkOptional;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.Iterables.elementsEqual;
@@ -251,7 +250,7 @@ class StatementAnalyzer
     }
 
     @Override
-    protected TupleDescriptor visitUseCollection(UseCollection node, AnalysisContext context)
+    protected TupleDescriptor visitUse(Use node, AnalysisContext context)
     {
         throw new SemanticException(NOT_SUPPORTED, node, "USE statement is not supported");
     }
@@ -274,7 +273,7 @@ class StatementAnalyzer
     protected TupleDescriptor visitShowPartitions(ShowPartitions showPartitions, AnalysisContext context)
     {
         QualifiedTableName table = MetadataUtil.createQualifiedTableName(session, showPartitions.getTable());
-        Optional<TableHandle> tableHandle = jdkOptional(metadata.getTableHandle(session, table));
+        Optional<TableHandle> tableHandle = metadata.getTableHandle(session, table);
         if (!tableHandle.isPresent()) {
             throw new SemanticException(MISSING_TABLE, showPartitions, "Table '%s' does not exist", table);
         }
@@ -357,6 +356,7 @@ class StatementAnalyzer
                                 aliasedName("return_type", "Return Type"),
                                 aliasedName("argument_types", "Argument Types"),
                                 aliasedName("function_type", "Function Type"),
+                                aliasedName("deterministic", "Deterministic"),
                                 aliasedName("description", "Description")),
                         table(QualifiedName.of(TABLE_INTERNAL_FUNCTIONS.getSchemaName(), TABLE_INTERNAL_FUNCTIONS.getTableName())),
                         Optional.empty(),
@@ -384,7 +384,7 @@ class StatementAnalyzer
 
         // verify the insert destination columns match the query
         QualifiedTableName targetTable = MetadataUtil.createQualifiedTableName(session, insert.getTarget());
-        Optional<TableHandle> targetTableHandle = jdkOptional(metadata.getTableHandle(session, targetTable));
+        Optional<TableHandle> targetTableHandle = metadata.getTableHandle(session, targetTable);
         if (!targetTableHandle.isPresent()) {
             throw new SemanticException(MISSING_TABLE, insert, "Table '%s' does not exist", targetTable);
         }
@@ -411,7 +411,7 @@ class StatementAnalyzer
         QualifiedTableName targetTable = MetadataUtil.createQualifiedTableName(session, node.getName());
         analysis.setCreateTableDestination(targetTable);
 
-        Optional<TableHandle> targetTableHandle = jdkOptional(metadata.getTableHandle(session, targetTable));
+        Optional<TableHandle> targetTableHandle = metadata.getTableHandle(session, targetTable);
         if (targetTableHandle.isPresent()) {
             throw new SemanticException(TABLE_ALREADY_EXISTS, node, "Destination table '%s' already exists", targetTable);
         }

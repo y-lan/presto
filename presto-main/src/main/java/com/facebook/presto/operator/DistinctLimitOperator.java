@@ -16,12 +16,12 @@ package com.facebook.presto.operator;
 import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
+import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -150,6 +150,7 @@ public class DistinctLimitOperator
         GroupByIdBlock ids = groupByHash.getGroupIds(page);
         for (int position = 0; position < ids.getPositionCount(); position++) {
             if (ids.getGroupId(position) == nextDistinctId) {
+                pageBuilder.declarePosition();
                 for (int channel = 0; channel < types.size(); channel++) {
                     Type type = types.get(channel);
                     type.appendTo(page.getBlock(channel), position, pageBuilder.getBlockBuilder(channel));

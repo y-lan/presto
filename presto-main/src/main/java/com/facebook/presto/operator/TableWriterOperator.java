@@ -18,13 +18,13 @@ import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.RecordSink;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
 import java.util.List;
+import java.util.Optional;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
@@ -209,6 +209,7 @@ public class TableWriterOperator
         String fragment = recordSink.commit();
 
         PageBuilder page = new PageBuilder(TYPES);
+        page.declarePosition();
         BIGINT.writeLong(page.getBlockBuilder(0), rowCount);
         VARCHAR.writeSlice(page.getBlockBuilder(1), Slices.utf8Slice(fragment));
         return page.build();

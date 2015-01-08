@@ -18,12 +18,12 @@ import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.type.TypeUtils;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import org.testng.annotations.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
@@ -82,6 +82,7 @@ public class TestGroupByHash
 
         PageBuilder pageBuilder = new PageBuilder(groupByHash.getTypes());
         for (int i = 0; i < groupByHash.getGroupCount(); i++) {
+            pageBuilder.declarePosition();
             groupByHash.appendValuesTo(i, pageBuilder, 0);
         }
         Page page = pageBuilder.build();
@@ -111,6 +112,7 @@ public class TestGroupByHash
 
         PageBuilder pageBuilder = new PageBuilder(groupByHash.getTypes());
         for (int i = 0; i < groupByHash.getGroupCount(); i++) {
+            pageBuilder.declarePosition();
             groupByHash.appendValuesTo(i, pageBuilder, 0);
         }
         Page outputPage = pageBuilder.build();
