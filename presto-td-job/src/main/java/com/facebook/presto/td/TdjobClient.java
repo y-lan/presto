@@ -38,6 +38,7 @@ import javax.inject.Inject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,7 +52,10 @@ import static io.airlift.http.client.ResponseHandlerUtils.propagate;
 public class TdjobClient
 {
     public static final String TD_API_PREFIX = "http://api.treasuredata.com/v3/";
-    public static final String JOB_STATUS_SUCCESS = "success";
+    public static final String GPDATA = "gpdata";
+    public static final String GPDATA_ADMIN = "JpSrvWgGpdata";
+    public static final String GPDATA_API_PREFIX = "https://gp-data.gree-office.net/v2/";
+    public static final List<String> JOB_STATUS_SUCCESS = Arrays.asList(new String[]{"success", "FINISHED"});
     private final HttpClient httpClient;
 
     /**
@@ -105,14 +109,23 @@ public class TdjobClient
             return tables.get(tableName);
         }
         else {
-            URI result = URI.create(TD_API_PREFIX + "job/show/" + tableName);
-            Request request = new Request(result, "GET", ImmutableListMultimap.of("AUTHORIZATION", "TD1 " + keyStore.get(schema)), null);
+            URI result;
+            Request request;
+            if (schema.equals(GPDATA)) {
+                result = URI.create(GPDATA_API_PREFIX + "job/show/" + tableName);
+                request = new Request(result, "GET",
+                        ImmutableListMultimap.of("x-api-token", keyStore.get(schema), "x-user", GPDATA_ADMIN), null);
+            }
+            else {
+                result = URI.create(TD_API_PREFIX + "job/show/" + tableName);
+                request = new Request(result, "GET", ImmutableListMultimap.of("AUTHORIZATION", "TD1 " + keyStore.get(schema)), null);
+            }
 
             FullJsonResponseHandler.JsonResponse<TdjobTable> execute = httpClient.execute(request,
                     FullJsonResponseHandler.createFullJsonResponseHandler(JsonCodec.jsonCodec(TdjobTable.class)));
             try {
                 TdjobTable table = execute.getValue();
-                if (JOB_STATUS_SUCCESS.equals(table.getStatus())) {
+                if (JOB_STATUS_SUCCESS.contains(table.getStatus())) {
                     tables.put(tableName, table);
                     return table;
                 }
@@ -140,7 +153,12 @@ public class TdjobClient
                     //ImmutableMap.Builder<String, Map<String, TdjobTable>> builder = ImmutableMap.builder();
                     ConcurrentMap<String, TdjobTable> tmpDbJobs;
                     for (final String key : metadataKeys.keySet()) {
-                        tmpDbJobs = lookupSchemas(httpClient, metadataKeys.get(key), jobsCodes);
+                        if (key.equals(GPDATA)) {
+                            tmpDbJobs = new MapMaker().makeMap();
+                        }
+                        else {
+                            tmpDbJobs = lookupSchemas(httpClient, metadataKeys.get(key), jobsCodes);
+                        }
                         schemas.put(key, tmpDbJobs);
                     }
                     return schemas;
@@ -182,8 +200,17 @@ public class TdjobClient
             @Override
             public InputStream getInput()
             {
-                URI result = URI.create(TD_API_PREFIX + "job/result/" + tableName + "?format=msgpack.gz");
-                Request request = new Request(result, "GET", ImmutableListMultimap.of("AUTHORIZATION", "TD1 " + keyStore.get(schema)), null);
+                URI result;
+                Request request;
+                if (schema.equals(GPDATA)) {
+                    result = URI.create(GPDATA_API_PREFIX + "job/result/" + tableName + "?format=msgpack.gz");
+                    request = new Request(result, "GET",
+                            ImmutableListMultimap.of("x-api-token", keyStore.get(schema), "x-user", GPDATA_ADMIN), null);
+                }
+                else {
+                    result = URI.create(TD_API_PREFIX + "job/result/" + tableName + "?format=msgpack.gz");
+                    request = new Request(result, "GET", ImmutableListMultimap.of("AUTHORIZATION", "TD1 " + keyStore.get(schema)), null);
+                }
                 return httpClient.execute(request, RawStreamResponseHandler.createRawStreamResponseHandler());
             }
         };

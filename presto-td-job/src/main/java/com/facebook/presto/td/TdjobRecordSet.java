@@ -30,6 +30,7 @@ public class TdjobRecordSet
     private final List<TdjobColumnHandle> columnHandles;
     private final List<Type> columnTypes;
     private final long totalBytes;
+    private final boolean isGpdataJob;
     private final InputSupplier<InputStream> inputStreamSupplier;
 
     public TdjobRecordSet(TdjobClient tdjobClient, TdjobSplit split, List<TdjobColumnHandle> columnHandles)
@@ -45,6 +46,12 @@ public class TdjobRecordSet
         this.columnTypes = types.build();
         totalBytes = split.getTotalBytes();
         inputStreamSupplier = tdjobClient.getJobResultSupplier(split.getSchemaName(), split.getTableName());
+        if (split.getSchemaName().equals(tdjobClient.GPDATA)) {
+            isGpdataJob = true;
+        }
+        else {
+            isGpdataJob = false;
+        }
     }
 
     @Override
@@ -56,6 +63,11 @@ public class TdjobRecordSet
     @Override
     public RecordCursor cursor()
     {
-        return new TdjobRecordCursor(columnHandles, totalBytes, inputStreamSupplier);
+        if (isGpdataJob) {
+            return new GpdataJobRecordCursor(columnHandles, totalBytes, inputStreamSupplier);
+        }
+        else {
+            return new TdjobRecordCursor(columnHandles, totalBytes, inputStreamSupplier);
+        }
     }
 }

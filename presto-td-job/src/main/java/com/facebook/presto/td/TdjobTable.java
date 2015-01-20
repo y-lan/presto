@@ -18,10 +18,12 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Function;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import io.airlift.json.JsonCodec;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.isNullOrEmpty;
@@ -30,29 +32,31 @@ import static com.google.common.base.Strings.isNullOrEmpty;
 public class TdjobTable
 {
     public static final JsonCodec<List<List<String>>> COLUMNS_CODEC = JsonCodec.listJsonCodec(JsonCodec.listJsonCodec(String.class));
+    public static final JsonCodec<List<Map<String, String>>> COLUMNS_CODEC_GPDATA = JsonCodec.listJsonCodec(JsonCodec.mapJsonCodec(String.class, String.class));
 
-    private final long cpuTime;
-    private final String createAt;
-    private final String database;
-    private final int duration;
-    private final String endAt;
-    private final String hiveResultSchema;
-    private final String name;
-    private final String organization;
-    private final int priority;
-    private final String query;
-    private final String result;
-    private final int resultSize;
-    private final int retryLimit;
-    private final String startAt;
-    private final String status;
-    private final String type;
-    private final String updatedAt;
-    private final String url;
-    private final String userName;
+    private long cpuTime = 0;
+    private String createAt;
+    private String database;
+    private int duration = 0;
+    private String endAt;
+    private String hiveResultSchema = "";
+    private String resultSchema = "";
+    private String name;
+    private String organization = "default";
+    private int priority = 0;
+    private String query;
+    private String result = "";
+    private int resultSize = 0;
+    private int retryLimit = 0;
+    private String startAt;
+    private String status;
+    private String type;
+    private String updatedAt = "";
+    private String url = "";
+    private String userName;
 
-    private final List<TdjobColumn> columns;
-    private final List<ColumnMetadata> columnsMetadata;
+    private List<TdjobColumn> columns;
+    private List<ColumnMetadata> columnsMetadata;
 
     @JsonCreator
     public TdjobTable(
@@ -62,6 +66,7 @@ public class TdjobTable
             @JsonProperty("duration") int duration,
             @JsonProperty("end_at") String endAt,
             @JsonProperty("hive_result_schema") String hiveResultSchema,
+            @JsonProperty("result_schema") String resultSchema,
             @JsonProperty("job_id") String jobId,
             @JsonProperty("organization") String organization,
             @JsonProperty("priority") int priority,
@@ -88,6 +93,7 @@ public class TdjobTable
         this.duration = duration;
         this.endAt = endAt;
         this.hiveResultSchema = hiveResultSchema;
+        this.resultSchema = resultSchema;
         this.name = jobId;
         this.organization = organization;
         this.priority = priority;
@@ -102,21 +108,43 @@ public class TdjobTable
         this.url = url;
         this.userName = userName;
 
-        if (status.equals("success") && hiveResultSchema != null) {
-            List<List<String>> rawColumns = COLUMNS_CODEC.fromJson(hiveResultSchema);
+        if (this.hiveResultSchema == null || this.hiveResultSchema.isEmpty()) {
+            this.hiveResultSchema = this.resultSchema;
+        }
 
-            int index = 0;
-            ImmutableList.Builder<TdjobColumn> columns = ImmutableList.builder();
-            ImmutableList.Builder<ColumnMetadata> columnsMetadata = ImmutableList.builder();
-            for (List<String> column : rawColumns) {
-                checkArgument(column.size() == 2, "Column meta in hive result schema should consists of exactly 2 elements");
-                TdjobColumn tdjobColumn = new TdjobColumn(column.get(0), column.get(1));
-                columns.add(tdjobColumn);
-                columnsMetadata.add(new ColumnMetadata(tdjobColumn.getName(), tdjobColumn.getType(), index, false));
-                index++;
+        if (status.toLowerCase().equals("success") || status.toLowerCase().equals("finished")) {
+            if (!Strings.isNullOrEmpty(this.resultSchema)) {
+                List<Map<String, String>> rawColumns = COLUMNS_CODEC_GPDATA.fromJson(this.resultSchema);
+
+                int index = 0;
+                ImmutableList.Builder<TdjobColumn> columns = ImmutableList.builder();
+                ImmutableList.Builder<ColumnMetadata> columnsMetadata = ImmutableList.builder();
+                for (Map<String, String> column : rawColumns) {
+                    checkArgument(column.size() == 2, "Column meta in hive result schema should consists of exactly 2 elements");
+                    TdjobColumn tdjobColumn = new TdjobColumn(column.get("name"), column.get("type"));
+                    columns.add(tdjobColumn);
+                    columnsMetadata.add(new ColumnMetadata(tdjobColumn.getName(), tdjobColumn.getType(), index, false));
+                    index++;
+                }
+                this.columns = columns.build();
+                this.columnsMetadata = columnsMetadata.build();
             }
-            this.columns = columns.build();
-            this.columnsMetadata = columnsMetadata.build();
+            else if (!Strings.isNullOrEmpty(this.hiveResultSchema)) {
+                List<List<String>> rawColumns = COLUMNS_CODEC.fromJson(this.hiveResultSchema);
+
+                int index = 0;
+                ImmutableList.Builder<TdjobColumn> columns = ImmutableList.builder();
+                ImmutableList.Builder<ColumnMetadata> columnsMetadata = ImmutableList.builder();
+                for (List<String> column : rawColumns) {
+                    checkArgument(column.size() == 2, "Column meta in hive result schema should consists of exactly 2 elements");
+                    TdjobColumn tdjobColumn = new TdjobColumn(column.get(0), column.get(1));
+                    columns.add(tdjobColumn);
+                    columnsMetadata.add(new ColumnMetadata(tdjobColumn.getName(), tdjobColumn.getType(), index, false));
+                    index++;
+                }
+                this.columns = columns.build();
+                this.columnsMetadata = columnsMetadata.build();
+            }
         }
         else {
             this.columns = null;
@@ -158,6 +186,12 @@ public class TdjobTable
     public String getHiveResultSchema()
     {
         return hiveResultSchema;
+    }
+
+    @JsonProperty("result_schema")
+    public String getResultSchema()
+    {
+        return resultSchema;
     }
 
     @JsonProperty("job_id")
